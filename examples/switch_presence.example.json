@@ -1,0 +1,12 @@
+{
+  "enabled": false,
+  "poll_interval_seconds": 60,
+  "notify_groups": ["123456789"],
+  "people": [
+    {
+      "name": "群友昵称",
+      "presence_url": "https://nxapi-presence.fancy.org.uk/api/presence/请替换",
+      "notify_groups": []
+    }
+  ]
+}

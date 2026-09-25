@@ -1,0 +1,656 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>游戏状态机器人 · 本机管理台</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #071019;
+      --surface: #101d29;
+      --surface-2: #162636;
+      --line: #294055;
+      --text: #eef6fc;
+      --muted: #8ca3b7;
+      --blue: #37a9ff;
+      --green: #52d49b;
+      --yellow: #ffc857;
+      --red: #ff657a;
+      --radius: 18px;
+      font-family: Inter, "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; color: var(--text); background:
+      radial-gradient(circle at 12% -10%, #0d4775 0, transparent 33rem),
+      radial-gradient(circle at 96% 90%, #3a153c 0, transparent 30rem), var(--bg); }
+    button, input, select { font: inherit; }
+    button { cursor: pointer; }
+    button:disabled { cursor: wait; opacity: .58; transform: none !important; }
+    .shell { width: min(1180px, calc(100% - 32px)); margin: 0 auto; padding: 34px 0 64px; }
+    header { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; margin-bottom: 26px; }
+    .eyebrow { color: var(--blue); font-size: 13px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; }
+    h1 { margin: 7px 0 5px; font-size: clamp(28px, 4vw, 42px); line-height: 1.1; }
+    .subtitle { margin: 0; color: var(--muted); }
+    .header-actions { display: flex; gap: 10px; flex-wrap: wrap; justify-content: flex-end; }
+    .button { border: 1px solid var(--line); border-radius: 12px; padding: 10px 15px; color: var(--text); background: #132332; transition: .16s ease; }
+    .button:hover { transform: translateY(-1px); border-color: #4e718d; }
+    .button.primary { background: var(--blue); color: #03101b; border-color: transparent; font-weight: 750; }
+    .button.warn { color: #ffdc8b; }
+    .notice { display: none; margin: 0 0 18px; padding: 13px 16px; border-radius: 13px; border: 1px solid #2f6c8c; background: #0c2a3d; color: #ccecff; }
+    .notice.show { display: block; }
+    .services { display: grid; grid-template-columns: repeat(4, 1fr); gap: 13px; margin-bottom: 22px; }
+    .service { min-height: 126px; padding: 18px; border: 1px solid var(--line); border-radius: var(--radius); background: linear-gradient(145deg, #152534, #0f1b26); }
+    .service-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    .service-name { font-weight: 720; }
+    .dot { width: 10px; height: 10px; border-radius: 50%; background: #607487; box-shadow: 0 0 0 5px #60748722; }
+    .dot.ok { background: var(--green); box-shadow: 0 0 0 5px #52d49b22; }
+    .dot.bad { background: var(--red); box-shadow: 0 0 0 5px #ff657a22; }
+    .service-state { margin-top: 20px; font-size: 24px; font-weight: 760; }
+    .service-detail { margin-top: 5px; font-size: 13px; color: var(--muted); }
+    .runtime-status { margin-bottom: 22px; }
+    .runtime-body { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; padding: 15px 20px 18px; }
+    .runtime-item { min-width: 0; padding: 12px 13px; border: 1px solid #263d50; border-radius: 12px; background: #0b1822; }
+    .runtime-title { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 720; }
+    .runtime-detail { margin-top: 7px; color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .runtime-item.error .runtime-detail { color: #ff9aaa; }
+    .runtime-item.disabled .runtime-detail { color: #a7b3bd; }
+    .runtime-uptime { margin-left: auto; color: var(--muted); font: 12px/1.4 Consolas, monospace; }
+    .calendar-admin { margin-bottom: 22px; }
+    .calendar-layout { display: grid; grid-template-columns: 340px minmax(0, 1fr); min-height: 310px; }
+    .calendar-editor { padding: 20px; border-right: 1px solid #263b4c; }
+    .calendar-form { display: grid; gap: 13px; }
+    .calendar-form-actions { display: flex; gap: 9px; justify-content: flex-end; margin-top: 3px; }
+    .crop-editor { padding: 10px; border: 1px solid #304a5f; border-radius: 12px; background: #07121b; }
+    .crop-editor[hidden] { display: none; }
+    .crop-canvas { display: block; width: 100%; height: auto; border-radius: 8px; background: #02070b; cursor: crosshair; touch-action: none; }
+    .crop-help { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 8px; color: var(--muted); font-size: 11px; }
+    .calendar-list { max-height: 470px; overflow: auto; padding: 14px; background: #0a151f; }
+    .calendar-items { display: grid; gap: 10px; }
+    .calendar-item { display: grid; grid-template-columns: 231px minmax(0, 1fr) auto; gap: 14px; align-items: center; padding: 11px; border: 1px solid #294154; border-radius: 14px; background: #12212e; }
+    .calendar-cover { width: 231px; height: 87px; object-fit: cover; border-radius: 10px; background: #253849; }
+    .calendar-cover.empty { display: grid; place-items: center; color: #91a8b9; font-weight: 800; font-size: 24px; }
+    .calendar-game-name { font-weight: 740; overflow-wrap: anywhere; }
+    .calendar-game-meta { margin-top: 6px; color: var(--muted); font-size: 12px; }
+    .calendar-item-actions { display: flex; gap: 7px; }
+    .button.small { padding: 7px 10px; border-radius: 9px; font-size: 12px; }
+    .button.danger { color: #ff9aaa; border-color: #6e3541; }
+    .grid { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(340px, .85fr); gap: 18px; align-items: start; }
+    .stack { display: grid; gap: 18px; }
+    section { border: 1px solid var(--line); border-radius: var(--radius); background: color-mix(in srgb, var(--surface) 94%, transparent); overflow: hidden; }
+    .section-head { padding: 19px 21px 14px; border-bottom: 1px solid #263b4c; }
+    h2 { margin: 0; font-size: 19px; }
+    .section-head p { margin: 5px 0 0; color: var(--muted); font-size: 13px; }
+    .section-body { padding: 20px; }
+    .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; }
+    label { display: grid; gap: 7px; color: #c9d9e6; font-size: 13px; }
+    label.full { grid-column: 1 / -1; }
+    input, select { width: 100%; min-width: 0; border: 1px solid #334c60; border-radius: 11px; background: #0a151f; color: var(--text); padding: 11px 12px; outline: none; }
+    input:focus, select:focus { border-color: var(--blue); box-shadow: 0 0 0 3px #37a9ff1f; }
+    .form-actions { display: flex; justify-content: flex-end; margin-top: 17px; }
+    .credential { display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: end; padding: 14px 0; border-bottom: 1px solid #233747; }
+    .credential:first-child { padding-top: 0; }
+    .credential:last-child { border-bottom: 0; padding-bottom: 0; }
+    .credential-title { display: flex; align-items: center; gap: 9px; font-weight: 700; margin-bottom: 8px; }
+    .chip { display: inline-flex; align-items: center; border-radius: 999px; padding: 3px 8px; background: #33404c; color: #c5d0d9; font-size: 11px; }
+    .chip.ok { background: #174936; color: #83e5ba; }
+    .credential input { max-width: 100%; }
+    .check-list { display: grid; gap: 9px; }
+    .check { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 11px 13px; background: #0d1923; border-radius: 11px; }
+    .check span:last-child { color: var(--muted); font-size: 13px; }
+    .check .ready { color: var(--green); }
+    .check .missing { color: var(--red); }
+    .path { margin-top: 13px; padding: 11px 13px; border-radius: 11px; background: #09131c; color: #9fc2da; font: 12px/1.55 Consolas, monospace; overflow-wrap: anywhere; }
+    .steps { margin: 0; padding-left: 20px; color: #c8d7e2; }
+    .steps li { padding: 5px 0 5px 4px; }
+    .muted { color: var(--muted); font-size: 13px; }
+    .danger-note { margin-top: 12px; color: #e7c779; font-size: 12px; }
+    .log-head { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
+    .log-actions { display: flex; align-items: center; gap: 10px; }
+    .log-meta { color: var(--muted); font: 12px/1.4 Consolas, monospace; }
+    .log-list { height: 430px; overflow: auto; padding: 9px; background: #071018; scrollbar-color: #36536a #071018; }
+    .log-entry { margin: 0 0 8px; padding: 11px 12px; border: 1px solid #24394a; border-left: 3px solid #3b708f; border-radius: 10px; background: #0d1923; }
+    .log-entry.warning { border-left-color: var(--yellow); background: #201c12; }
+    .log-entry.error, .log-entry.critical { border-left-color: var(--red); background: #25131a; }
+    .log-entry-head { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 6px; color: var(--muted); font: 11px/1.4 Consolas, monospace; }
+    .log-level { padding: 2px 6px; border-radius: 999px; color: #d8e9f5; background: #244054; font-weight: 700; }
+    .log-entry.warning .log-level { color: #ffe09a; background: #5b451b; }
+    .log-entry.error .log-level, .log-entry.critical .log-level { color: #ffc1ca; background: #66303b; }
+    .log-message { margin: 0; color: #d6e3ed; white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.55 Consolas, "Microsoft YaHei", monospace; }
+    .log-empty { display: grid; place-items: center; min-height: 100%; color: var(--muted); text-align: center; padding: 32px; }
+    @media (max-width: 900px) {
+      .services { grid-template-columns: 1fr 1fr; }
+      .runtime-body { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .grid { grid-template-columns: 1fr; }
+      .calendar-layout { grid-template-columns: 1fr; }
+      .calendar-editor { border-right: 0; border-bottom: 1px solid #263b4c; }
+    }
+    @media (max-width: 600px) {
+      .shell { width: min(100% - 20px, 1180px); padding-top: 22px; }
+      header { display: block; }
+      .header-actions { justify-content: flex-start; margin-top: 18px; }
+      .services, .form-grid { grid-template-columns: 1fr; }
+      .runtime-body { grid-template-columns: 1fr; }
+      .credential { grid-template-columns: 1fr; }
+      label.full { grid-column: auto; }
+      .calendar-item { grid-template-columns: 1fr; }
+      .calendar-cover { width: 231px; height: 87px; max-width: 100%; }
+      .calendar-item-actions { grid-column: 1 / -1; justify-content: flex-end; }
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <header>
+      <div>
+        <div class="eyebrow">LOCAL CONTROL CENTER</div>
+        <h1>游戏状态机器人管理台</h1>
+        <p class="subtitle">服务监控、运行日志与凭据配置都集中在这里。<span id="last-status">尚未刷新</span></p>
+      </div>
+      <div class="header-actions">
+        <button class="button" id="refresh">刷新状态</button>
+        <button class="button warn" data-action="switch-login">打开 Switch 登录</button>
+        <button class="button warn" data-action="psn-login">打开 PSN 登录</button>
+        <button class="button warn" data-action="xbox-login">打开 Xbox 登录</button>
+        <button class="button primary" data-action="restart-bot">重启 QQ Bot</button>
+      </div>
+    </header>
+
+    <div class="notice" id="notice"></div>
+
+    <div class="services" id="services">
+      <article class="service" data-service="napcat"><div class="service-top"><span class="service-name">NapCat</span><i class="dot"></i></div><div class="service-state">检查中</div><div class="service-detail">WebUI 6099</div></article>
+      <article class="service" data-service="video_api"><div class="service-top"><span class="service-name">视频 API</span><i class="dot"></i></div><div class="service-state">检查中</div><div class="service-detail">本机端口 8000</div></article>
+      <article class="service" data-service="qq_bot"><div class="service-top"><span class="service-name">QQ Bot</span><i class="dot"></i></div><div class="service-state">检查中</div><div class="service-detail">OneBot 服务 8081</div></article>
+      <article class="service" data-service="onebot"><div class="service-top"><span class="service-name">WebSocket</span><i class="dot"></i></div><div class="service-state">检查中</div><div class="service-detail">应用层连接心跳</div></article>
+    </div>
+
+    <section class="runtime-status">
+      <div class="section-head log-head">
+        <div><h2>/bot status</h2><p>与群内状态命令使用同一份机器人运行数据。</p></div>
+        <span class="runtime-uptime" id="runtime-uptime">运行时间：读取中</span>
+      </div>
+      <div class="runtime-body" id="runtime-components"></div>
+    </section>
+
+    <section class="calendar-admin">
+      <div class="section-head log-head">
+        <div><h2>游戏发售日历管理</h2><p>手动维护 Switch、PS、Steam 等平台游戏；保存后群内日历立即生效。</p></div>
+        <button class="button" id="refresh-calendar" type="button">刷新列表</button>
+      </div>
+      <div class="calendar-layout">
+        <div class="calendar-editor">
+          <form class="calendar-form" id="calendar-form">
+            <input type="hidden" name="game_id">
+            <label>游戏名称<input name="name" maxlength="120" required placeholder="例如：马力欧赛车世界"></label>
+            <label>游戏平台
+              <select name="platform" required>
+                <option value="Switch">Switch</option>
+                <option value="PS">PlayStation</option>
+                <option value="Steam">Steam</option>
+                <option value="Xbox">Xbox</option>
+                <option value="PC">PC</option>
+                <option value="Other">其他</option>
+              </select>
+            </label>
+            <label>发售日期<input name="release_date" type="date" required></label>
+            <label>游戏图片<input name="image" type="file" accept="image/png,image/jpeg,image/webp"></label>
+            <div class="crop-editor" id="crop-editor" hidden>
+              <canvas class="crop-canvas" id="crop-canvas" width="640" height="360"></canvas>
+              <div class="crop-help"><span>拖动选区移动；拖右下角圆点缩放</span><button class="button small" id="crop-reset" type="button">重置选区</button></div>
+            </div>
+            <div class="muted" id="calendar-image-note">建议上传横版封面；编辑时不选图片会保留原图。</div>
+            <div class="calendar-form-actions">
+              <button class="button" id="calendar-cancel" type="button" hidden>取消编辑</button>
+              <button class="button primary" id="calendar-save" type="submit">添加游戏</button>
+            </div>
+          </form>
+        </div>
+        <div class="calendar-list">
+          <div class="calendar-items" id="calendar-items"><div class="log-empty">正在读取已添加游戏…</div></div>
+        </div>
+      </div>
+    </section>
+
+    <div class="grid">
+      <div class="stack">
+        <section>
+          <div class="section-head"><h2>基础配置</h2><p>保存后重启 QQ Bot 生效；不会改动未显示的高级设置。</p></div>
+          <div class="section-body">
+            <form id="config-form">
+              <div class="form-grid">
+                <label class="full">允许使用机器人的群号（英文逗号分隔）<input name="QQ_ALLOWED_GROUPS" placeholder="123456789,987654321"></label>
+                <label class="full">NapCat 启动器路径<input name="NAPCAT_LAUNCHER" placeholder="C:\NapCat.Shell\launcher-win10.bat"></label>
+                <label>NapCat 快速登录 QQ<input name="NAPCAT_QQ" inputmode="numeric" placeholder="可留空"></label>
+                <label>群视频上限 MB<input name="QQ_MAX_VIDEO_MB" type="number" min="1"></label>
+                <label>Switch 轮询秒数<input name="SWITCH_POLL_INTERVAL" type="number" min="1"></label>
+                <label>PSN 轮询秒数<input name="PS5_POLL_INTERVAL" type="number" min="1"></label>
+                <label>Xbox 轮询秒数<input name="XBOX_POLL_INTERVAL" type="number" min="90"></label>
+                <label>Steam 轮询秒数<input name="STEAM_POLL_INTERVAL" type="number" min="1"></label>
+                <label>排行榜最大采样间隔<input name="GAME_TIME_MAX_SAMPLE_GAP" type="number" min="1"></label>
+                <label>发售提醒小时（0-23）<input name="GAME_RELEASE_REMINDER_HOUR" type="number" min="0" max="23"></label>
+                <label>发售提醒天数<input name="GAME_RELEASE_REMINDER_DAYS" placeholder="1,0 表示提前一天和当天"></label>
+                <label>发售提醒检查秒数<input name="GAME_RELEASE_REMINDER_INTERVAL" type="number" min="60"></label>
+                <label class="full">抖音 Cookie 文件（可选）<input name="DOUYIN_COOKIES_FILE" placeholder="例如 C:\video_analysis\secrets\douyin-cookies.txt"></label>
+                <label class="full">抖音浏览器 Cookie（可选）<input name="DOUYIN_COOKIES_FROM_BROWSER" placeholder="先在浏览器访问抖音，再填写 edge 或 chrome:Default"></label>
+                <label class="full">小红书 Cookie 文件（可选）<input name="XIAOHONGSHU_COOKIES_FILE" placeholder="例如 C:\video_analysis\secrets\xiaohongshu-cookies.txt"></label>
+                <label class="full">小红书浏览器 Cookie（可选）<input name="XIAOHONGSHU_COOKIES_FROM_BROWSER" placeholder="先在浏览器登录小红书，再填写 edge 或 chrome:Default"></label>
+              </div>
+              <div class="form-actions"><button class="button primary" type="submit">保存配置</button></div>
+            </form>
+          </div>
+        </section>
+
+        <section>
+          <div class="section-head log-head">
+            <div><h2>QQ Bot 运行日志</h2><p>同步启动窗口中的系统事件；已滤除普通群消息和 Matcher 流水账。</p></div>
+            <div class="log-actions"><span class="log-meta" id="log-updated">等待读取</span><button class="button" id="refresh-logs">刷新日志</button></div>
+          </div>
+          <div class="log-list" id="log-list"><div class="log-empty">正在读取机器人日志…</div></div>
+        </section>
+      </div>
+
+      <div class="stack">
+        <section>
+          <div class="section-head"><h2>平台凭据</h2><p>只显示配置状态，已保存的密钥永远不会传回页面。</p></div>
+          <div class="section-body" id="credentials">
+            <div class="credential" data-secret="steam"><div><div class="credential-title">Steam Web API <span class="chip">检查中</span></div><input type="password" autocomplete="new-password" placeholder="粘贴新的 32 位 Key"></div><button class="button">保存</button></div>
+            <div class="credential" data-secret="steamgriddb"><div><div class="credential-title">SteamGridDB <span class="chip">检查中</span></div><input type="password" autocomplete="new-password" placeholder="可选：竖版封面 API Key"></div><button class="button">保存</button></div>
+            <div class="credential" data-secret="psn"><div><div class="credential-title">PSN NPSSO <span class="chip">检查中</span></div><input type="password" autocomplete="new-password" placeholder="粘贴新的 64 位 NPSSO"></div><button class="button">保存</button></div>
+            <div class="credential" data-secret="xbox_oauth"><div><div class="credential-title">Xbox 微软账号 <span class="chip">检查中</span></div><div class="muted">点击页面上方“打开 Xbox 登录”，无需手机号验证或 API Key。</div></div></div>
+            <div class="credential" data-secret="openxbl"><div><div class="credential-title">OpenXBL（可选备用） <span class="chip">检查中</span></div><input type="password" autocomplete="new-password" placeholder="可留空：粘贴 OpenXBL API Key"></div><button class="button">保存</button></div>
+            <p class="danger-note">凭据保存在移动硬盘的 secrets 目录。不要截图、发群或上传公开网盘。</p>
+          </div>
+        </section>
+
+        <section>
+          <div class="section-head"><h2>运行环境</h2><p>迁移后缺少的组件会在这里标红。</p></div>
+          <div class="section-body"><div class="check-list" id="dependencies"></div></div>
+        </section>
+      </div>
+    </div>
+  </main>
+  <script>
+    const notice = document.querySelector('#notice');
+    const configForm = document.querySelector('#config-form');
+    const refreshButton = document.querySelector('#refresh');
+    const refreshLogsButton = document.querySelector('#refresh-logs');
+    const logList = document.querySelector('#log-list');
+    const calendarForm = document.querySelector('#calendar-form');
+    const calendarItemsElement = document.querySelector('#calendar-items');
+    const calendarSaveButton = document.querySelector('#calendar-save');
+    const calendarCancelButton = document.querySelector('#calendar-cancel');
+    const cropEditor = document.querySelector('#crop-editor');
+    const cropCanvas = document.querySelector('#crop-canvas');
+    const cropContext = cropCanvas.getContext('2d');
+    const cropAspect = 231 / 87;
+    let cropImage = null;
+    let cropDisplay = null;
+    let cropSelection = null;
+    let cropPointer = null;
+    let cropShouldSave = false;
+    let calendarItems = [];
+    const dependencyNames = {python:'Python 环境', ffmpeg:'FFmpeg', node:'Node.js', nxapi:'nxapi', yutto:'yutto', yt_dlp:'yt-dlp', napcat_launcher:'NapCat 启动器'};
+    const runtimeNames = {qq:'QQ / NapCat', video:'视频解析', switch:'Switch', ps5:'PS5', steam:'Steam', xbox:'Xbox'};
+    const runtimeStateNames = {ok:'正常', error:'异常', disabled:'未启用', starting:'启动中'};
+    function tell(message, error=false) {
+      notice.textContent = message; notice.classList.add('show');
+      notice.style.borderColor = error ? '#874052' : '#2f6c8c';
+      notice.style.background = error ? '#351823' : '#0c2a3d';
+      window.scrollTo({top:0, behavior:'smooth'});
+    }
+    async function api(url, options={}) {
+      const response = await fetch(url, {credentials:'same-origin', cache:'no-store', ...options});
+      const data = response.status === 204 ? {} : await response.json();
+      if (!response.ok) throw new Error(data.detail || '操作失败');
+      return data;
+    }
+    function setService(name, ok, detail) {
+      const card = document.querySelector(`[data-service="${name}"]`);
+      card.querySelector('.dot').className = `dot ${ok ? 'ok' : 'bad'}`;
+      card.querySelector('.service-state').textContent = ok ? '正常' : '异常';
+      if (detail) card.querySelector('.service-detail').textContent = detail;
+    }
+    function renderRuntimeStatus(status) {
+      const container = document.querySelector('#runtime-components'); container.innerHTML = '';
+      for (const [key, label] of Object.entries(runtimeNames)) {
+        const value = status.components[key] || {state:'starting', detail:'等待机器人状态'};
+        const item = document.createElement('div'); item.className = `runtime-item ${value.state}`;
+        const title = document.createElement('div'); title.className = 'runtime-title';
+        const dot = document.createElement('i'); dot.className = `dot ${value.state === 'ok' ? 'ok' : value.state === 'error' ? 'bad' : ''}`;
+        const text = document.createElement('span'); text.textContent = `${label}：${runtimeStateNames[value.state] || '未知'}`;
+        const detail = document.createElement('div'); detail.className = 'runtime-detail'; detail.textContent = value.detail || '无详细信息'; detail.title = detail.textContent;
+        title.append(dot, text); item.append(title, detail); container.append(item);
+      }
+      document.querySelector('#runtime-uptime').textContent = `运行时间：${status.uptime || '未知'}`;
+    }
+    function resetCalendarForm() {
+      calendarForm.reset();
+      calendarForm.elements.game_id.value = '';
+      calendarForm.elements.platform.value = 'Switch';
+      cropImage = null; cropDisplay = null; cropSelection = null; cropPointer = null; cropShouldSave = false;
+      cropEditor.hidden = true; cropContext.clearRect(0, 0, cropCanvas.width, cropCanvas.height);
+      calendarSaveButton.textContent = '添加游戏';
+      calendarCancelButton.hidden = true;
+      document.querySelector('#calendar-image-note').textContent = '建议上传横版封面；编辑时不选图片会保留原图。';
+    }
+    function renderCalendarItems(items) {
+      calendarItems = items;
+      calendarItemsElement.innerHTML = '';
+      if (!items.length) {
+        calendarItemsElement.innerHTML = '<div class="log-empty">还没有添加游戏，请使用左侧表单登记。</div>';
+        return;
+      }
+      for (const item of items) {
+        const article = document.createElement('article'); article.className = 'calendar-item';
+        let cover;
+        if (item.preview_url) {
+          cover = document.createElement('img'); cover.className = `calendar-cover${item.local_image ? ' uploaded' : ''}`; cover.src = item.preview_url; cover.alt = '';
+        } else {
+          cover = document.createElement('div'); cover.className = 'calendar-cover empty'; cover.textContent = item.name.slice(0, 1);
+        }
+        const content = document.createElement('div');
+        const name = document.createElement('div'); name.className = 'calendar-game-name'; name.textContent = item.name;
+        const meta = document.createElement('div'); meta.className = 'calendar-game-meta'; meta.textContent = `${item.release_date} · ${item.platform}`;
+        content.append(name, meta);
+        const actions = document.createElement('div'); actions.className = 'calendar-item-actions';
+        const edit = document.createElement('button'); edit.type = 'button'; edit.className = 'button small'; edit.dataset.calendarEdit = item.game_id; edit.textContent = '编辑';
+        const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'button small danger'; remove.dataset.calendarDelete = item.game_id; remove.textContent = '删除';
+        actions.append(edit, remove); article.append(cover, content, actions); calendarItemsElement.append(article);
+      }
+    }
+    async function refreshCalendar(manual=false) {
+      const button = document.querySelector('#refresh-calendar');
+      if (manual) { button.disabled = true; button.textContent = '读取中…'; }
+      try {
+        const data = await api('/api/admin/game-calendar');
+        renderCalendarItems(data.items);
+      } catch (error) {
+        calendarItemsElement.innerHTML = `<div class="log-empty">日历读取失败：${String(error.message).replace(/[<>&]/g, '')}</div>`;
+        if (manual) tell(error.message, true);
+      } finally {
+        if (manual) { button.disabled = false; button.textContent = '刷新列表'; }
+      }
+    }
+    function imageData(file) {
+      return new Promise((resolve, reject) => {
+        if (!file) { resolve(null); return; }
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = () => reject(new Error('无法读取选择的图片'));
+        reader.readAsDataURL(file);
+      });
+    }
+    function cropBounds() {
+      if (!cropDisplay) return null;
+      return {left:cropDisplay.x, top:cropDisplay.y, right:cropDisplay.x + cropDisplay.w, bottom:cropDisplay.y + cropDisplay.h};
+    }
+    function resetCropSelection(markChanged=false) {
+      if (!cropDisplay) return;
+      let width = cropDisplay.w;
+      let height = width / cropAspect;
+      if (height > cropDisplay.h) { height = cropDisplay.h; width = height * cropAspect; }
+      cropSelection = {
+        x: cropDisplay.x + (cropDisplay.w - width) / 2,
+        y: cropDisplay.y + (cropDisplay.h - height) / 2,
+        w: width,
+        h: height,
+      };
+      if (markChanged) cropShouldSave = true;
+      drawCropEditor();
+    }
+    function drawCropEditor() {
+      cropContext.clearRect(0, 0, cropCanvas.width, cropCanvas.height);
+      cropContext.fillStyle = '#02070b'; cropContext.fillRect(0, 0, cropCanvas.width, cropCanvas.height);
+      if (!cropImage || !cropDisplay || !cropSelection) return;
+      cropContext.drawImage(cropImage, cropDisplay.x, cropDisplay.y, cropDisplay.w, cropDisplay.h);
+      cropContext.save();
+      cropContext.fillStyle = 'rgba(0, 0, 0, .58)';
+      cropContext.beginPath(); cropContext.rect(0, 0, cropCanvas.width, cropCanvas.height);
+      cropContext.rect(cropSelection.x, cropSelection.y, cropSelection.w, cropSelection.h);
+      cropContext.fill('evenodd'); cropContext.restore();
+      cropContext.strokeStyle = '#5ec8ff'; cropContext.lineWidth = 3;
+      cropContext.strokeRect(cropSelection.x, cropSelection.y, cropSelection.w, cropSelection.h);
+      cropContext.fillStyle = '#5ec8ff'; cropContext.beginPath();
+      cropContext.arc(cropSelection.x + cropSelection.w, cropSelection.y + cropSelection.h, 9, 0, Math.PI * 2); cropContext.fill();
+    }
+    function loadCropImage(source, saveWhenLoaded) {
+      return new Promise((resolve, reject) => {
+        const image = new Image();
+        image.onload = () => {
+          const scale = Math.min(cropCanvas.width / image.naturalWidth, cropCanvas.height / image.naturalHeight);
+          cropImage = image;
+          cropDisplay = {
+            x:(cropCanvas.width - image.naturalWidth * scale) / 2,
+            y:(cropCanvas.height - image.naturalHeight * scale) / 2,
+            w:image.naturalWidth * scale,
+            h:image.naturalHeight * scale,
+            scale,
+          };
+          cropShouldSave = saveWhenLoaded;
+          cropEditor.hidden = false;
+          resetCropSelection(false);
+          resolve();
+        };
+        image.onerror = () => reject(new Error('无法载入待裁剪图片'));
+        image.src = source;
+      });
+    }
+    function cropPoint(event) {
+      const rect = cropCanvas.getBoundingClientRect();
+      return {x:(event.clientX - rect.left) * cropCanvas.width / rect.width, y:(event.clientY - rect.top) * cropCanvas.height / rect.height};
+    }
+    function croppedImageData() {
+      if (!cropShouldSave || !cropImage || !cropDisplay || !cropSelection) return null;
+      const output = document.createElement('canvas'); output.width = 462; output.height = 174;
+      const context = output.getContext('2d');
+      const sx = (cropSelection.x - cropDisplay.x) / cropDisplay.scale;
+      const sy = (cropSelection.y - cropDisplay.y) / cropDisplay.scale;
+      const sw = cropSelection.w / cropDisplay.scale;
+      const sh = cropSelection.h / cropDisplay.scale;
+      context.drawImage(cropImage, sx, sy, sw, sh, 0, 0, output.width, output.height);
+      return output.toDataURL('image/jpeg', .92);
+    }
+    async function refresh(manual=false) {
+      if (manual) { refreshButton.disabled = true; refreshButton.textContent = '刷新中…'; }
+      try {
+        const data = await api('/api/admin/status');
+        setService('napcat', data.services.napcat, data.services.napcat ? 'WebUI 正在监听' : '未检测到 6099');
+        setService('video_api', data.services.video_api, data.services.video_api ? '转换服务正在运行' : '未检测到 8000');
+        setService('qq_bot', data.services.qq_bot, data.services.qq_bot ? '机器人进程正在监听' : '未检测到 8081');
+        const onebot = data.services.onebot;
+        setService('onebot', onebot.fresh && onebot.connected, onebot.fresh ? (onebot.connected ? `连接稳定 · 心跳 ${onebot.age_seconds}s` : 'NapCat 尚未连接') : '应用心跳已过期');
+        renderRuntimeStatus(data.bot_status);
+        for (const [key, value] of Object.entries(data.config)) {
+          const input = configForm.elements.namedItem(key);
+          if (input && document.activeElement !== input && input.dataset.dirty !== 'true') input.value = value;
+        }
+        for (const [kind, ready] of Object.entries(data.credentials)) {
+          const chip = document.querySelector(`[data-secret="${kind}"] .chip`);
+          chip.textContent = ready ? '已配置' : '未配置'; chip.className = `chip ${ready ? 'ok' : ''}`;
+        }
+        const deps = document.querySelector('#dependencies'); deps.innerHTML = '';
+        for (const [key, ready] of Object.entries(data.dependencies)) {
+          const row = document.createElement('div'); row.className = 'check';
+          const title = document.createElement('span'); title.textContent = dependencyNames[key] || key;
+          const state = document.createElement('span'); state.className = ready ? 'ready' : 'missing'; state.textContent = ready ? '已就绪' : '缺失';
+          row.append(title, state); deps.append(row);
+        }
+        document.querySelector('#last-status').textContent = ` · 最近刷新 ${new Date().toLocaleTimeString('zh-CN', {hour12:false})}`;
+        if (manual) tell('运行状态已刷新。');
+        return data;
+      } catch (error) { tell(error.message, true); throw error; }
+      finally { if (manual) { refreshButton.disabled = false; refreshButton.textContent = '刷新状态'; } }
+    }
+    function renderLogs(entries) {
+      logList.innerHTML = '';
+      if (!entries.length) {
+        logList.innerHTML = '<div class="log-empty">暂时没有主动行为或错误日志。</div>';
+        return;
+      }
+      for (const entry of entries) {
+        const article = document.createElement('article');
+        article.className = `log-entry ${entry.level.toLowerCase()}`;
+        const head = document.createElement('div'); head.className = 'log-entry-head';
+        const level = document.createElement('span'); level.className = 'log-level'; level.textContent = entry.level;
+        const time = document.createElement('span'); time.textContent = entry.timestamp;
+        const source = document.createElement('span'); source.textContent = entry.source;
+        const message = document.createElement('pre'); message.className = 'log-message'; message.textContent = entry.message;
+        head.append(level, time, source); article.append(head, message); logList.append(article);
+      }
+      logList.scrollTop = logList.scrollHeight;
+    }
+    async function refreshLogs(manual=false) {
+      if (manual) { refreshLogsButton.disabled = true; refreshLogsButton.textContent = '读取中…'; }
+      try {
+        const data = await api('/api/admin/logs?limit=120');
+        renderLogs(data.entries);
+        document.querySelector('#log-updated').textContent = new Date(data.updated_at).toLocaleTimeString('zh-CN', {hour12:false});
+      } catch (error) {
+        logList.innerHTML = `<div class="log-empty">日志读取失败：${String(error.message).replace(/[<>&]/g, '')}</div>`;
+        if (manual) tell(error.message, true);
+      } finally {
+        if (manual) { refreshLogsButton.disabled = false; refreshLogsButton.textContent = '刷新日志'; }
+      }
+    }
+    const sleep = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
+    async function waitForBotRestart(previousPid) {
+      for (let attempt = 0; attempt < 20; attempt += 1) {
+        await sleep(1500);
+        const data = await refresh(false);
+        const heartbeat = data.services.onebot;
+        if (data.services.qq_bot && heartbeat.fresh && heartbeat.connected && heartbeat.pid && heartbeat.pid !== previousPid) {
+          return heartbeat.pid;
+        }
+      }
+      throw new Error('重启指令已执行，但35秒内没有检测到新的已连接 QQ Bot 心跳，请查看下方错误日志。');
+    }
+    configForm.addEventListener('input', event => { if (event.target.matches('input')) event.target.dataset.dirty = 'true'; });
+    configForm.addEventListener('submit', async event => {
+      event.preventDefault();
+      const values = Object.fromEntries(new FormData(configForm).entries());
+      try { const data = await api('/api/admin/config', {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({values})}); configForm.querySelectorAll('input').forEach(input => delete input.dataset.dirty); tell(data.message); }
+      catch (error) { tell(error.message, true); }
+    });
+    document.querySelector('#credentials').addEventListener('click', async event => {
+      const button = event.target.closest('button'); if (!button) return;
+      const row = button.closest('[data-secret]'), input = row.querySelector('input'), kind = row.dataset.secret;
+      if (!input.value.trim()) { tell('请先粘贴要保存的新凭据。', true); return; }
+      button.disabled = true;
+      try { const data = await api(`/api/admin/secrets/${kind}`, {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({value:input.value})}); input.value=''; tell(data.message); await refresh(); }
+      catch (error) { tell(error.message, true); }
+      finally { button.disabled = false; }
+    });
+    calendarForm.elements.image.addEventListener('change', async event => {
+      const file = event.target.files[0];
+      if (!file) return;
+      try {
+        const source = await imageData(file);
+        await loadCropImage(source, true);
+        document.querySelector('#calendar-image-note').textContent = '拖动蓝色选区调整位置，拖右下角圆点缩放；蓝框内就是最终封面。';
+      } catch (error) { tell(error.message, true); }
+    });
+    cropCanvas.addEventListener('pointerdown', event => {
+      if (!cropSelection || !cropDisplay) return;
+      const point = cropPoint(event);
+      const handleX = cropSelection.x + cropSelection.w, handleY = cropSelection.y + cropSelection.h;
+      const onHandle = Math.hypot(point.x - handleX, point.y - handleY) <= 20;
+      const inside = point.x >= cropSelection.x && point.x <= handleX && point.y >= cropSelection.y && point.y <= handleY;
+      if (!onHandle && !inside) return;
+      cropPointer = {mode:onHandle ? 'resize' : 'move', start:point, original:{...cropSelection}};
+      cropCanvas.setPointerCapture(event.pointerId); event.preventDefault();
+    });
+    cropCanvas.addEventListener('pointermove', event => {
+      if (!cropPointer || !cropSelection || !cropDisplay) return;
+      const point = cropPoint(event), bounds = cropBounds();
+      if (cropPointer.mode === 'move') {
+        cropSelection.x = Math.max(bounds.left, Math.min(bounds.right - cropSelection.w, cropPointer.original.x + point.x - cropPointer.start.x));
+        cropSelection.y = Math.max(bounds.top, Math.min(bounds.bottom - cropSelection.h, cropPointer.original.y + point.y - cropPointer.start.y));
+      } else {
+        const maximumWidth = Math.min(bounds.right - cropPointer.original.x, (bounds.bottom - cropPointer.original.y) * cropAspect);
+        const requestedWidth = Math.max(point.x - cropPointer.original.x, (point.y - cropPointer.original.y) * cropAspect);
+        cropSelection.w = Math.max(Math.min(80, maximumWidth), Math.min(maximumWidth, requestedWidth));
+        cropSelection.h = cropSelection.w / cropAspect;
+      }
+      cropShouldSave = true; drawCropEditor(); event.preventDefault();
+    });
+    const finishCropPointer = event => {
+      if (!cropPointer) return;
+      if (cropCanvas.hasPointerCapture(event.pointerId)) cropCanvas.releasePointerCapture(event.pointerId);
+      cropPointer = null;
+    };
+    cropCanvas.addEventListener('pointerup', finishCropPointer);
+    cropCanvas.addEventListener('pointercancel', finishCropPointer);
+    document.querySelector('#crop-reset').addEventListener('click', () => resetCropSelection(true));
+    calendarForm.addEventListener('submit', async event => {
+      event.preventDefault();
+      calendarSaveButton.disabled = true; calendarSaveButton.textContent = '保存中…';
+      try {
+        const payload = {
+          game_id: calendarForm.elements.game_id.value || null,
+          name: calendarForm.elements.name.value.trim(),
+          platform: calendarForm.elements.platform.value,
+          release_date: calendarForm.elements.release_date.value,
+          image_data: croppedImageData(),
+        };
+        const data = await api('/api/admin/game-calendar', {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify(payload)});
+        tell(data.message); resetCalendarForm(); await refreshCalendar();
+      } catch (error) { tell(error.message, true); }
+      finally { calendarSaveButton.disabled = false; if (!calendarForm.elements.game_id.value) calendarSaveButton.textContent = '添加游戏'; }
+    });
+    calendarCancelButton.addEventListener('click', resetCalendarForm);
+    document.querySelector('#refresh-calendar').addEventListener('click', () => refreshCalendar(true));
+    calendarItemsElement.addEventListener('click', async event => {
+      const edit = event.target.closest('[data-calendar-edit]');
+      if (edit) {
+        const item = calendarItems.find(value => value.game_id === edit.dataset.calendarEdit); if (!item) return;
+        calendarForm.elements.game_id.value = item.game_id;
+        calendarForm.elements.name.value = item.name;
+        calendarForm.elements.platform.value = item.platform;
+        calendarForm.elements.release_date.value = item.release_date;
+        calendarForm.elements.image.value = '';
+        calendarSaveButton.textContent = '保存修改'; calendarCancelButton.hidden = false;
+        document.querySelector('#calendar-image-note').textContent = item.has_image ? '已有图片；不重新选择会保留当前图片。' : '当前没有图片，可以在这里补充上传。';
+        cropImage = null; cropDisplay = null; cropSelection = null; cropPointer = null; cropShouldSave = false; cropEditor.hidden = true;
+        if (item.local_image && item.preview_url) {
+          try {
+            await loadCropImage(`${item.preview_url}${item.preview_url.includes('?') ? '&' : '?'}crop=${Date.now()}`, false);
+            document.querySelector('#calendar-image-note').textContent = '可继续调整当前图片；不移动选区会保留原图。';
+          } catch (error) { tell(error.message, true); }
+        }
+        calendarForm.scrollIntoView({behavior:'smooth', block:'center'});
+        return;
+      }
+      const remove = event.target.closest('[data-calendar-delete]');
+      if (!remove) return;
+      const item = calendarItems.find(value => value.game_id === remove.dataset.calendarDelete); if (!item) return;
+      if (!window.confirm(`确定删除“${item.name}”吗？`)) return;
+      remove.disabled = true;
+      try {
+        const data = await api(`/api/admin/game-calendar/${encodeURIComponent(item.game_id)}`, {method:'DELETE'});
+        tell(data.message); if (calendarForm.elements.game_id.value === item.game_id) resetCalendarForm(); await refreshCalendar();
+      } catch (error) { tell(error.message, true); remove.disabled = false; }
+    });
+    document.addEventListener('click', async event => {
+      const button = event.target.closest('[data-action]'); if (!button) return;
+      button.disabled = true;
+      try {
+        const data = await api(`/api/admin/actions/${button.dataset.action}`, {method:'POST'});
+        tell(data.message);
+        if (button.dataset.action === 'restart-bot') {
+          const newPid = await waitForBotRestart(data.previous_pid);
+          tell(`QQ Bot 已重启并重新连接，进程 PID ${newPid}。`);
+        }
+        await refreshLogs();
+      }
+      catch (error) { tell(error.message, true); }
+      finally { setTimeout(() => button.disabled = false, 1200); }
+    });
+    refreshButton.addEventListener('click', async () => { await Promise.allSettled([refresh(true), refreshLogs(), refreshCalendar()]); });
+    refreshLogsButton.addEventListener('click', () => refreshLogs(true));
+    refresh().catch(() => {}); refreshLogs(); refreshCalendar();
+    setInterval(() => refresh().catch(() => {}), 10000);
+    setInterval(() => refreshLogs(), 5000);
+  </script>
+</body>
+</html>

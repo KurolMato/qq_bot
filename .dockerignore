@@ -1,0 +1,13 @@
+.git
+.venv
+.venvs
+downloads
+data
+logs
+__pycache__
+.pytest_cache
+secrets
+assets/archive
+assets/previews
+*.log
+*-preview.png

@@ -1,0 +1,15 @@
+services:
+  video-mp4:
+    build: .
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - ./downloads:/data/downloads
+    environment:
+      MAX_CONCURRENT_DOWNLOADS: "2"
+      MAX_QUEUE_SIZE: "16"
+      DOWNLOAD_TIMEOUT_SECONDS: "3600"
+      JOB_TTL_SECONDS: "21600"
+      JOB_CLEANUP_INTERVAL_SECONDS: "300"
+      VIDEO_API_TOKEN: ${VIDEO_API_TOKEN:-}
+    restart: unless-stopped

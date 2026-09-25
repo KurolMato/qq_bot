@@ -1,0 +1,3 @@
+steam-perfect.png is a locally drawn Steam-style 100% completion ribbon.
+It is not an official Valve trademark asset or a game achievement icon.
+Regenerate with tools/preview_steam_achievement.py (Pillow); no online download at runtime.

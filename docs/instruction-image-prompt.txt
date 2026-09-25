@@ -1,0 +1,53 @@
+Edit reference into a polished, highly readable Chinese QQ bot instruction infographic. White background, thin rounded colored borders, platform logos and clean typography matching reference. Increase canvas height as needed, wide 1536px+ layout. Exact accurate text, no invented commands, no duplicate panels. Use this layout and content:
+Top compact full-width panel blue: 视频转 MP4
+直接发送 B站、b23.tv、X、抖音、小红书、小黑盒视频链接
+
+Immediately below MP4 a full-width teal panel title 游戏发售日历
+/game list 9  查看九月发售游戏
+/game add 游戏名  添加游戏（默认 Steam）
+/game add switch 商店链接    /game add psn 商店链接
+Leave the area beneath the calendar command boxes blank; do not include any management-backend note.
+
+Next four platform columns like reference, Switch red, PlayStation blue, Xbox green, Steam navy. Keep logos. Text:
+Switch:
+/switch add 好友码 [昵称]
+/switch list
+/switch nickname 好友码 昵称
+/switch remove 好友码
+PlayStation:
+/psn add 在线ID [昵称]
+/psn list
+/psn nickname 在线ID 昵称
+/psn remove 在线ID
+Xbox:
+/xbox add 玩家代号 [昵称]
+/xbox list
+/xbox nickname 玩家代号 昵称
+/xbox remove 玩家代号
+Steam:
+/steam add 好友码或SteamID [昵称]
+/steam list
+/steam nickname SteamID 昵称
+/steam remove SteamID
+Small one-line below columns: [昵称] 可选填；Steam 也支持个人主页链接。同一昵称的跨平台时长合并统计。
+
+Next row two cards:
+left purple 查看游戏时长排行
+/rank 今日    /rank w 本周    /rank m 本月
+/rank m 8 查看八月
+/rank remove 游戏名 屏蔽    /rank add 游戏名 恢复
+/rank o 查看另一成员组
+/rank o move 成员名 移入    /rank o restore 成员名 移回
+right blue 查看当前在线玩家
+/game ol
+汇总 Steam、PS、Switch、Xbox 正在游玩的玩家
+
+Next full-width violet panel 查询游戏通关时长
+/hltb 游戏名
+示例：/hltb 《艾尔登法环》
+主线 · 主线＋支线 · 全收集
+出现候选时：/hltb select 1
+
+Bottom narrow orange strip:
+/bot status  查看机器人运行状态
+Avoid squeezing tiny text; use enough vertical height around 1600-1900px. No decorative verbosity. All English commands lower case with exact slash and spaces. This is final project help image, strong information hierarchy and whitespace.
