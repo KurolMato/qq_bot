@@ -75,7 +75,7 @@ C:\NapCat.Shell\launcher-win10.bat
 
 ## 四、下载项目
 
-项目仓库：https://github.com/OWNER/REPOSITORY（公开发布后替换为新仓库地址）
+项目仓库：https://github.com/KurolMato/qq_bot
 
 ### 方法 A：下载 ZIP
 
