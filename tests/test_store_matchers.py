@@ -180,3 +180,10 @@ def test_store_url_detection() -> None:
         "https://store.playstation.com/zh-hans-hk/product/UP9000-PPSA21564_00-ASTROBOT00000000"
     )
     assert not is_playstation_store_url("宇宙机器人")
+
+
+def test_rank_ps_cover_prefers_official_sixteen_by_nine_banner():
+    page = _ps_page().replace('BACKGROUND_LAYER_ART', 'SIXTEEN_BY_NINE_BANNER')
+    url = 'https://store.playstation.com/zh-hans-hk/concept/10002684'
+    assert _parse_ps_store_page(page, url).image_url.endswith('astro-logo-banner.jpg')
+    assert _parse_ps_store_page(page, url, prefer_landscape=True).image_url.endswith('astro-background.jpg')

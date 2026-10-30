@@ -1,4 +1,5 @@
 import asyncio
+import pytest
 from concurrent.futures import Future
 from contextlib import suppress
 from threading import Event
@@ -235,3 +236,39 @@ def test_run_job_converts_unexpected_worker_exception_to_failed_job(tmp_path, mo
     assert job.status == "failed"
     assert job.error == "转换失败"
     store.remove(job_id)
+
+
+@pytest.mark.parametrize("title", [None, "图文标题 [CQ:at,qq=all]"])
+def test_image_job_serves_ordered_images_with_access_checks_and_cleanup(tmp_path, monkeypatch, title):
+    import app.main as main
+    from PIL import Image
+    from app.downloader import DownloadedImages
+
+    job_id = "image-job-test"
+    job_dir = tmp_path / job_id
+    job_dir.mkdir()
+    images = [job_dir / "first.jpg", job_dir / "second.png"]
+    for image in images:
+        Image.new("RGB", (20, 30), "orange").save(image)
+    store.add(Job(id=job_id, source_url="https://www.douyin.com/note/12345"))
+    monkeypatch.setattr(main, "DOWNLOAD_DIR", tmp_path)
+    result_images = DownloadedImages(images, title) if title is not None else images
+    monkeypatch.setattr(main, "download_to_mp4", lambda *args: (result_images, "images ready"))
+    main.run_job(job_id, "https://www.douyin.com/note/12345")
+    result = client.get(f"/api/jobs/{job_id}").json()
+    assert result["status"] == "completed"
+    assert result["media_type"] == "images"
+    assert result["title"] == (title or "")
+    assert result["download_url"] is None
+    assert result["image_urls"] == [f"/api/jobs/{job_id}/images/{i}" for i in range(2)]
+    for url, image, mime in zip(result["image_urls"], images, ["image/jpeg", "image/png"]):
+        response = client.get(url)
+        assert response.content == image.read_bytes()
+        assert response.headers["content-type"] == mime
+    assert client.get(f"/api/jobs/{job_id}/images/-1").status_code == 404
+    assert client.get(f"/api/jobs/{job_id}/images/2").status_code == 404
+    remote = TestClient(app, client=("192.0.2.10", 50000))
+    assert remote.get(result["image_urls"][0]).status_code == 403
+    assert client.delete(f"/api/jobs/{job_id}").status_code == 204
+    assert not job_dir.exists()
+    assert client.get(result["image_urls"][0]).status_code == 404

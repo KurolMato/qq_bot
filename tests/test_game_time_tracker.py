@@ -46,10 +46,10 @@ def test_personal_merges_platforms_and_ignores_board_but_filters_games(tmp_path)
     tracker.mark_poll("steam", start + timedelta(minutes=2))
     tracker.move_member_to_other_rank("200", "TestPlayer")
     for period in ("day", "week", "month"):
-        assert tracker.personal_snapshot("200", "TestPlayer", period=period, at=start).members[0].total_seconds == 240
+        assert tracker.personal_snapshot("200", "TESTPLAYER", period=period, at=start).members[0].total_seconds == 240
     tracker.hide_game("200", "Hidden")
     reopened = GameTimeTracker(tmp_path / "time.db")
-    result = reopened.personal_snapshot("200", "Mat", at=start)
+    result = reopened.personal_snapshot("200", "Test", at=start)
     assert result.members[0].total_seconds == 120
     assert len(result.members[0].games) == 1
 
@@ -92,16 +92,16 @@ def test_cross_platform_time_merges_by_unique_nickname(tmp_path: Path) -> None:
     tracker = GameTimeTracker(tmp_path / "time.db", max_sample_gap=600)
     start = datetime(2026, 8, 29, 4, 10, tzinfo=timezone(timedelta(hours=8))).astimezone(UTC)
     _observe(tracker, platform="switch", account="sw", name="TestPlayer", game="Game A", at=start)
-    _observe(tracker, platform="steam", account="st", name="示例玩家", game="Game B", at=start)
+    _observe(tracker, platform="steam", account="st", name="testplayer", game="Game B", at=start)
     _observe(tracker, platform="switch", account="sw", name="TestPlayer", game="Game A", at=start + timedelta(minutes=2))
-    _observe(tracker, platform="steam", account="st", name="示例玩家", game="Game B", at=start + timedelta(minutes=3))
+    _observe(tracker, platform="steam", account="st", name="testplayer", game="Game B", at=start + timedelta(minutes=3))
     tracker.mark_poll("steam", start + timedelta(minutes=3))
 
     snapshot = tracker.snapshot("200")
 
     assert len(snapshot.members) == 1
     member = snapshot.members[0]
-    assert member.name == "示例玩家"
+    assert member.name == "testplayer"
     assert member.total_seconds == 300
     assert [(game.name, game.seconds) for game in member.games] == [
         ("Game B", 180),
@@ -234,14 +234,14 @@ def test_other_rank_moves_merged_member_out_of_main_board(tmp_path: Path) -> Non
     tracker = GameTimeTracker(tmp_path / "time.db", max_sample_gap=600)
     start = datetime(2026, 9, 9, 5, 0, tzinfo=timezone(timedelta(hours=8))).astimezone(UTC)
     _observe(tracker, platform="steam", account="st", name="TestPlayer", game="Game A", at=start)
-    _observe(tracker, platform="switch", account="sw", name="示例玩家", game="Game B", at=start)
+    _observe(tracker, platform="switch", account="sw", name="testplayer", game="Game B", at=start)
     _observe(tracker, platform="steam", account="st", name="TestPlayer", game="Game A", at=start + timedelta(minutes=2))
-    _observe(tracker, platform="switch", account="sw", name="示例玩家", game="Game B", at=start + timedelta(minutes=2))
+    _observe(tracker, platform="switch", account="sw", name="testplayer", game="Game B", at=start + timedelta(minutes=2))
     tracker.mark_poll("steam", start + timedelta(minutes=2))
 
-    display_name, changed = tracker.move_member_to_other_rank("200", "TestPlayer")
+    display_name, changed = tracker.move_member_to_other_rank("200", "TESTPLAYER")
 
-    assert display_name in {"TestPlayer", "示例玩家"}
+    assert display_name in {"TestPlayer", "testplayer"}
     assert changed is True
     assert tracker.snapshot("200").members == ()
     other = tracker.snapshot("200", board="other")
@@ -249,7 +249,7 @@ def test_other_rank_moves_merged_member_out_of_main_board(tmp_path: Path) -> Non
     assert other.members[0].total_seconds == 240
     assert len(other.members[0].games) == 2
 
-    _, restored = tracker.restore_member_to_main_rank("200", "示例玩家")
+    _, restored = tracker.restore_member_to_main_rank("200", "testplayer")
     assert restored is True
     assert tracker.snapshot("200", board="other").members == ()
     assert len(tracker.snapshot("200").members) == 1

@@ -1,6 +1,13 @@
 $ErrorActionPreference = 'Stop'
 $projectRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 
+function Test-ProcessAlreadyExited {
+    param([System.Management.Automation.ErrorRecord]$ErrorRecord)
+    # A parent can exit together with its child after the PID list was read.
+    # Match the cmdlet error ID so access-denied and other failures stay visible.
+    return $ErrorRecord.FullyQualifiedErrorId -like 'NoProcessFoundForGivenId,*'
+}
+
 function Stop-MatchingProcess {
     param([string[]]$Patterns)
     try {
@@ -21,7 +28,9 @@ function Stop-MatchingProcess {
             Stop-Process -Id $process.ProcessId -Force
             Write-Host "Stopped $($process.Name) PID $($process.ProcessId)"
         } catch {
-            Write-Warning "Unable to stop $($process.Name) PID $($process.ProcessId): $($_.Exception.Message)"
+            if (-not (Test-ProcessAlreadyExited $_)) {
+                Write-Warning "Unable to stop $($process.Name) PID $($process.ProcessId): $($_.Exception.Message)"
+            }
         }
     }
 }
@@ -41,7 +50,9 @@ foreach ($listener in $napcatListeners) {
             Write-Host "Stopped NapCat PID $($process.Id)"
         }
     } catch {
-        Write-Warning "Unable to stop NapCat listener PID $($listener.OwningProcess): $($_.Exception.Message)"
+        if (-not (Test-ProcessAlreadyExited $_)) {
+            Write-Warning "Unable to stop NapCat listener PID $($listener.OwningProcess): $($_.Exception.Message)"
+        }
     }
 }
 
@@ -53,7 +64,9 @@ foreach ($process in @(Get-Process -Name 'NapCatWinBootMain' -ErrorAction Silent
             Stop-Process -Id $process.Id -Force
             Write-Host "Stopped NapCat PID $($process.Id)"
         } catch {
-            Write-Warning "Unable to stop NapCat PID $($process.Id): $($_.Exception.Message)"
+            if (-not (Test-ProcessAlreadyExited $_)) {
+                Write-Warning "Unable to stop NapCat PID $($process.Id): $($_.Exception.Message)"
+            }
         }
     }
 }

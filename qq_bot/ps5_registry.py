@@ -151,6 +151,7 @@ class Ps5Subscription:
     force_notify: bool = False
     nickname: str | None = None
     current_game_image_url: str | None = None
+    current_game_title_id: str | None = None
 
 
 class Ps5Registry:
@@ -192,6 +193,8 @@ class Ps5Registry:
                 db.execute("ALTER TABLE ps5_subscriptions ADD COLUMN nickname TEXT")
             if "current_game_image_url" not in columns:
                 db.execute("ALTER TABLE ps5_subscriptions ADD COLUMN current_game_image_url TEXT")
+            if "current_game_title_id" not in columns:
+                db.execute("ALTER TABLE ps5_subscriptions ADD COLUMN current_game_title_id TEXT")
             # Sony still returns this default avatar on an old plain-HTTP URL.
             # Some Windows/network configurations block it, while HTTPS works.
             db.execute(
@@ -215,6 +218,7 @@ class Ps5Registry:
             force_notify=bool(row["force_notify"]),
             nickname=row["nickname"],
             current_game_image_url=row["current_game_image_url"],
+            current_game_title_id=row["current_game_title_id"],
         )
 
     def list_group(self, group_id: str) -> list[Ps5Subscription]:
@@ -238,8 +242,8 @@ class Ps5Registry:
                 INSERT INTO ps5_subscriptions
                 (online_id, account_id, avatar_url, qq_user_id, group_id, status,
                  current_game, initialised, force_notify, nickname, current_game_image_url,
-                 created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 created_at, updated_at, current_game_title_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     item.online_id,
@@ -255,6 +259,7 @@ class Ps5Registry:
                     item.current_game_image_url,
                     now,
                     now,
+                    item.current_game_title_id,
                 ),
             )
 
@@ -285,13 +290,14 @@ class Ps5Registry:
         *,
         status: str,
         initialised: bool,
+        title_id: str | None = None,
     ) -> None:
         with self._connect() as db:
             db.execute(
                 """
                 UPDATE ps5_subscriptions
                 SET status = ?, current_game = ?, current_game_image_url = ?,
-                    initialised = ?,
+                    initialised = ?, current_game_title_id = ?,
                     force_notify = 0, updated_at = ?
                 WHERE account_id = ? AND group_id = ?
                 """,
@@ -300,6 +306,7 @@ class Ps5Registry:
                     activity.game_name if activity.game_key else None,
                     activity.game_image_url if activity.game_key else None,
                     int(initialised),
+                    title_id if activity.game_key else None,
                     utc_now(),
                     item.account_id,
                     item.group_id,
@@ -459,9 +466,14 @@ class Ps5PresenceMonitor:
         self.interval = max(float(os.getenv("PS5_POLL_INTERVAL", "90")), 60)
         self._stop = asyncio.Event()
         self._avatar_refresh_date = None
+        self._avatar_task: asyncio.Task[None] | None = None
 
     async def stop(self) -> None:
         self._stop.set()
+        if self._avatar_task is not None:
+            self._avatar_task.cancel()
+            await asyncio.gather(self._avatar_task, return_exceptions=True)
+            self._avatar_task = None
 
     async def refresh_avatars(self) -> dict[str, int]:
         counts = {"checked": 0, "updated": 0, "failed": 0}
@@ -482,12 +494,21 @@ class Ps5PresenceMonitor:
 
     async def refresh_avatars_if_due(self) -> None:
         today = datetime.now().date()
-        if self._avatar_refresh_date != today:
-            try:
-                await asyncio.wait_for(self.refresh_avatars(), timeout=30)
-            except TimeoutError:
-                logger.warning("PSN avatar refresh timed out; keeping existing avatars")
-            self._avatar_refresh_date = today
+        if self._avatar_refresh_date == today or self._avatar_task is not None:
+            return
+        self._avatar_refresh_date = today
+        # Large registries take minutes; keep this off the presence-poll path.
+        self._avatar_task = asyncio.create_task(self._refresh_avatars_background())
+
+    async def _refresh_avatars_background(self) -> None:
+        try:
+            await self.refresh_avatars()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("PSN avatar refresh failed")
+        finally:
+            self._avatar_task = None
 
     async def poll_once(self) -> None:
         subscriptions = await asyncio.to_thread(self.registry.list_all)
@@ -572,6 +593,7 @@ class Ps5PresenceMonitor:
                     activity,
                     status="active",
                     initialised=True,
+                    title_id=str((_presence_game(presence) or {}).get("npTitleId") or "") or None,
                 )
         await asyncio.to_thread(game_time_tracker.mark_poll, "ps", polled_at)
 

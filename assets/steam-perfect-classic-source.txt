@@ -1,0 +1,4 @@
+steam-perfect-classic.png is the reference image supplied by the user on 2026-10-05.
+Source attachment: codex-clipboard-a7dd2ae1-0530-4348-883d-5514f57c9836.png.
+The original white canvas is preserved; steam_achievement_ui.py clips its silhouette when rendering.
+This is a bundled local asset; production rendering does not download it.

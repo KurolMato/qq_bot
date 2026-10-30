@@ -227,6 +227,7 @@
                 <label>PSN 轮询秒数<input name="PS5_POLL_INTERVAL" type="number" min="1"></label>
                 <label>Xbox 轮询秒数<input name="XBOX_POLL_INTERVAL" type="number" min="90"></label>
                 <label>Steam 轮询秒数<input name="STEAM_POLL_INTERVAL" type="number" min="1"></label>
+                <label>Steam API 代理<input name="STEAM_HTTP_PROXY" placeholder="留空自动；例如 http://127.0.0.1:7897"></label>
                 <label>排行榜最大采样间隔<input name="GAME_TIME_MAX_SAMPLE_GAP" type="number" min="1"></label>
                 <label>发售提醒小时（0-23）<input name="GAME_RELEASE_REMINDER_HOUR" type="number" min="0" max="23"></label>
                 <label>发售提醒天数<input name="GAME_RELEASE_REMINDER_DAYS" placeholder="1,0 表示提前一天和当天"></label>
@@ -234,6 +235,7 @@
                 <label class="full">抖音 Cookie 文件（可选）<input name="DOUYIN_COOKIES_FILE" placeholder="例如 C:\video_analysis\secrets\douyin-cookies.txt"></label>
                 <label class="full">抖音浏览器 Cookie（可选）<input name="DOUYIN_COOKIES_FROM_BROWSER" placeholder="先在浏览器访问抖音，再填写 edge 或 chrome:Default"></label>
                 <label class="full">小红书 Cookie 文件（可选）<input name="XIAOHONGSHU_COOKIES_FILE" placeholder="例如 C:\video_analysis\secrets\xiaohongshu-cookies.txt"></label>
+                <label class="full">小黑盒 Cookie 文件（可选）<input name="XIAOHEIHE_COOKIES_FILE" placeholder="Netscape 格式；如出现验证码，请先在浏览器手动完成"></label>
                 <label class="full">小红书浏览器 Cookie（可选）<input name="XIAOHONGSHU_COOKIES_FROM_BROWSER" placeholder="先在浏览器登录小红书，再填写 edge 或 chrome:Default"></label>
               </div>
               <div class="form-actions"><button class="button primary" type="submit">保存配置</button></div>

@@ -174,7 +174,9 @@ async def handle_steam_command(bot: Bot, event: GroupMessageEvent, argument: Mes
         await bot.send(event, "Steam 服务暂时无法完成操作，请稍后再试。")
         return
 
-    avatar = await small_image_segment(item.avatar_url, 96, 96)
+    avatar = await small_image_segment(
+        item.avatar_url, 96, 96, avatar_cache_key=f"steam:{item.steam_id}",
+    )
     message = Message()
     if avatar:
         message += avatar

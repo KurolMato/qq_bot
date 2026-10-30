@@ -99,7 +99,7 @@ def subscription(**overrides: object) -> XboxSubscription:
     return XboxSubscription(**values)  # type: ignore[arg-type]
 
 
-@pytest.mark.parametrize("value", ["示例玩家", "Major Nelson", "Player#1234"])
+@pytest.mark.parametrize("value", ["TestPlayer", "Major Nelson", "Player#1234"])
 def test_normalize_gamertag(value: str) -> None:
     assert normalize_gamertag(value) == value
 
@@ -335,3 +335,67 @@ def test_errors_are_safe_for_group(error: BaseException, expected: str) -> None:
     message = xbox_user_message(error)
     assert expected in message
     assert "C:/" not in message
+
+
+@pytest.mark.parametrize("source", ["detail", "title"])
+def test_peoplehub_preserves_cover(source: str) -> None:
+    title = {"titleId": "99", "titleName": "Arknights: Endfield"}
+    detail = {"IsGame": True, "TitleId": "99", "PresenceText": "Playing"}
+    (detail if source == "detail" else title)["ImageUrl"] = "//example.com/cover.jpg"
+    records = _people_presence_records({"people": [{
+        "xuid": "42", "titlePresence": title, "presenceDetails": [detail],
+    }]})
+    assert parse_xbox_activity(subscription(), records["42"]).game_image_url == "https://example.com/cover.jpg"
+
+
+def test_cover_requests_only_image_decoration(monkeypatch: pytest.MonkeyPatch) -> None:
+    from types import SimpleNamespace
+
+    async def get_title_info(title_id, *, fields):
+        assert title_id == "99"
+        assert fields == ["image"]
+        return {"titles": [{"displayImage": "https://example.com/cover.jpg"}]}
+
+    async def direct_call(operation, callback):
+        return await callback(SimpleNamespace(titlehub=SimpleNamespace(get_title_info=get_title_info)))
+
+    client = XboxClient()
+    monkeypatch.setattr(XboxClient, "direct_configured", property(lambda _: True))
+    monkeypatch.setattr(client, "_direct_call", direct_call)
+    assert asyncio.run(client.game_cover("99")) == "https://example.com/cover.jpg"
+
+
+@pytest.mark.parametrize("same_game", [True, False])
+def test_monitor_cover_reaches_card_and_storage(tmp_path, monkeypatch, same_game) -> None:
+    from types import SimpleNamespace
+
+    registry = XboxRegistry(tmp_path / "xbox.db")
+    registry.add(subscription(current_game="Arknights: Endfield - In menus" if same_game else "Other",
+                              current_game_image_url="https://example.com/old.jpg", force_notify=True))
+    expected = "https://example.com/old.jpg" if same_game else "https://example.com/new.jpg"
+    calls = []
+
+    async def presences(xuids):
+        return {xuids[0]: {"titles": [{"titleId": "99", "name": "Arknights: Endfield"}]}}
+
+    async def cover(title_id):
+        calls.append(title_id)
+        return "https://example.com/new.jpg"
+
+    async def build(name, activity):
+        assert activity.game_image_url == expected
+        return "card"
+
+    class FakeBot:
+        async def send_group_msg(self, **kwargs):
+            assert kwargs["message"] == "card"
+
+    monkeypatch.setattr(xbox_registry, "Bot", FakeBot)
+    monkeypatch.setattr(xbox_registry.nonebot, "get_bots", lambda: {"bot": FakeBot()})
+    monkeypatch.setattr(xbox_registry, "build_activity_message", build)
+    monkeypatch.setattr(xbox_registry, "game_time_tracker", SimpleNamespace(
+        observe=lambda **kwargs: None, mark_poll=lambda *args: None))
+    client = SimpleNamespace(configured=True, presences=presences, game_cover=cover)
+    asyncio.run(xbox_registry.XboxPresenceMonitor(registry, client).poll_once())
+    assert registry.list_all()[0].current_game_image_url == expected
+    assert calls == ([] if same_game else ["99"])

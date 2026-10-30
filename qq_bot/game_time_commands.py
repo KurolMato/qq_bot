@@ -13,9 +13,11 @@ from .game_time_leaderboard import build_leaderboard_message
 from .game_time_tracker import tracker
 from .monthly_rank_cache import monthly_cache
 from .personal_game_time import PERIODS, parse_personal_query, resolve_binding_name
+from .personal_rank import build_personal_rank_message
 
 
 logger = logging.getLogger(__name__)
+_pending_personal_profiles: set[tuple[str, str, str]] = set()
 
 
 async def _send_reply(bot: Bot, event: GroupMessageEvent, message: str | Message) -> None:
@@ -35,7 +37,7 @@ async def _send_reply(bot: Bot, event: GroupMessageEvent, message: str | Message
 config = BotConfig.from_env()
 rank_command = on_command(
     "rank",
-    aliases={"排行", "游戏排行", "今日排行"},
+    aliases={"排行", "游戏排行", "今日排行", "排", "排名", "排行榜"},
     priority=10,
     block=True,
 )
@@ -57,28 +59,52 @@ async def handle_rank_command(
         text = text[1:].strip()
     action, _, game_name = text.partition(" ")
     action = action.casefold()
+    if action in {"我", "我的"}:
+        action = "me"
     game_name = " ".join(game_name.strip().split())
     if action in {"me", "player"}:
+        profile_month = (int(game_name)
+                         if len(game_name) <= 2 and game_name.isascii() and game_name.isdecimal() else None)
+        is_profile = action == "me" and (not game_name or profile_month is not None)
+        pending_key = (group_id, str(event.user_id), str(profile_month)) if is_profile else None
+        if pending_key in _pending_personal_profiles:
+            return
+        if pending_key is not None:
+            _pending_personal_profiles.add(pending_key)
         try:
-            if action == "player":
-                period, member_name = parse_personal_query(game_name)
-            else:
-                if game_name and game_name.casefold() not in PERIODS:
-                    raise ValueError("用法：/rank me [d/y/w/m]")
-                period = PERIODS.get(game_name.casefold(), "day")
-                member_name = await asyncio.to_thread(tracker.bound_member, group_id, str(event.user_id))
-                if member_name is None:
-                    raise ValueError("请先发送 /绑定 昵称或玩家名，再使用 /rank me 查询。")
-            result = await asyncio.to_thread(
-                tracker.personal_snapshot, group_id, member_name, period=period
-            )
-            reply = await build_leaderboard_message(result, personal_name=member_name)
-        except ValueError as exc:
-            reply = str(exc)
-        except Exception:
-            logger.exception("Personal game-time query failed for group %s", group_id)
-            reply = "个人时长查询失败，请稍后再试。"
-        await _send_reply(bot, event, reply)
+            try:
+                if action == "player":
+                    period, member_name = parse_personal_query(game_name)
+                else:
+                    if (profile_month is not None and not 1 <= profile_month <= 12) or (
+                        game_name and profile_month is None and game_name.casefold() not in PERIODS
+                    ):
+                        raise ValueError("用法：/rank me [d/y/w/m 或 1-12月份]，例如 /rank me 9")
+                    period = PERIODS.get(game_name.casefold(), "day")
+                    member_name = await asyncio.to_thread(tracker.bound_member, group_id, str(event.user_id))
+                    if member_name is None:
+                        raise ValueError("请先发送 /绑定 昵称或玩家名，再使用 /rank me 查询。")
+                if is_profile:
+                    if profile_month is None:
+                        reply = await build_personal_rank_message(tracker, group_id, member_name)
+                    else:
+                        reply = await build_personal_rank_message(
+                            tracker, group_id, member_name, month=profile_month,
+                        )
+                else:
+                    result = await asyncio.to_thread(
+                        tracker.personal_snapshot, group_id, member_name, period=period
+                    )
+                    reply = await build_leaderboard_message(result, personal_name=member_name)
+            except ValueError as exc:
+                reply = str(exc)
+            except Exception:
+                logger.exception("Personal game-time query failed for group %s", group_id)
+                reply = "个人时长查询失败，请稍后再试。"
+            await _send_reply(bot, event, reply)
+        finally:
+            if pending_key is not None:
+                _pending_personal_profiles.discard(pending_key)
         return
     if other_board and action in {"move", "restore"}:
         if not game_name:
@@ -150,9 +176,9 @@ async def handle_rank_command(
     if text and not monthly and not weekly and not yesterday:
         await _send_reply(
             bot, event,
-            "用法：/rank 查看今日排行\n/rank y 查看昨日结算\n/rank w 查看本周排行\n/rank m 查看月排行\n"
+            "用法：/rank 查看今日排行（也可用 /排、/排名、/排行榜）\n/rank y 查看昨日结算\n/rank w 查看本周排行\n/rank m 查看月排行\n"
             "/rank o 查看另一成员组（同样支持 y、w、m）\n"
-            "/绑定 昵称或玩家名\n/rank me [d/y/w/m] 个人时长\n/rank player [d/y/w/m] 昵称 指定成员时长\n"
+            "/绑定 昵称或玩家名\n/rank me 个人档案（也可用 /我的排名、/排名我）\n/rank me 月份 月末结算档案（例如 /rank me 9）\n/rank me [d/y/w/m] 个人时长明细\n/rank player [d/y/w/m] 昵称 指定成员时长\n"
             "/rank o move 成员名 移入另一成员组\n/rank o restore 成员名 恢复至主榜\n"
             "/rank remove 游戏名 屏蔽游戏\n/rank add 游戏名 取消屏蔽",
         )
@@ -194,6 +220,24 @@ async def handle_rank_command(
         await _send_reply(bot, event, "排行榜生成失败，请稍后再试。")
         return
     await _send_reply(bot, event, message)
+
+
+rank_me_command = on_command(
+    "我的排名",
+    aliases={"排名我", "我的排行"},
+    priority=10,
+    block=True,
+)
+
+
+@rank_me_command.handle()
+async def handle_rank_me_command(
+    bot: Bot,
+    event: GroupMessageEvent,
+    argument: Message = CommandArg(),
+) -> None:
+    extra = argument.extract_plain_text().strip()
+    await handle_rank_command(bot, event, Message(f"me {extra}".strip()))
 
 
 bind_command = on_command("绑定", priority=10, block=True)

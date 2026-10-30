@@ -1,3 +1,4 @@
+import asyncio
 import json
 from io import BytesIO
 from pathlib import Path
@@ -15,8 +16,7 @@ from qq_bot.switch_presence import (
 )
 
 
-@pytest.mark.asyncio
-async def test_legacy_switch_monitor_detects_nxapi_subscriptions(
+def test_legacy_switch_monitor_detects_nxapi_subscriptions(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     class FakeRegistry:
@@ -26,11 +26,10 @@ async def test_legacy_switch_monitor_detects_nxapi_subscriptions(
 
     monkeypatch.setattr("qq_bot.switch_registry.registry", FakeRegistry())
 
-    assert await _nxapi_has_subscriptions() is True
+    assert asyncio.run(_nxapi_has_subscriptions()) is True
 
 
-@pytest.mark.asyncio
-async def test_legacy_switch_monitor_remains_available_without_nxapi_subscriptions(
+def test_legacy_switch_monitor_remains_available_without_nxapi_subscriptions(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     class FakeRegistry:
@@ -40,11 +39,10 @@ async def test_legacy_switch_monitor_remains_available_without_nxapi_subscriptio
 
     monkeypatch.setattr("qq_bot.switch_registry.registry", FakeRegistry())
 
-    assert await _nxapi_has_subscriptions() is False
+    assert asyncio.run(_nxapi_has_subscriptions()) is False
 
 
-@pytest.mark.asyncio
-async def test_download_image_accepts_valid_jpeg_with_octet_stream_mime(
+def test_download_image_accepts_valid_jpeg_with_octet_stream_mime(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     source = BytesIO()
@@ -73,7 +71,7 @@ async def test_download_image_accepts_valid_jpeg_with_octet_stream_mime(
 
     monkeypatch.setattr("qq_bot.switch_presence.httpx.AsyncClient", Client)
 
-    content = await _download_image("https://img-eshop.cdn.nintendo.net/i/game.jpg")
+    content = asyncio.run(_download_image("https://img-eshop.cdn.nintendo.net/i/game.jpg"))
 
     assert content == source.getvalue()
 

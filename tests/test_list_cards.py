@@ -81,6 +81,37 @@ def test_online_overview_keeps_empty_platform_column() -> None:
         assert result.size == (1560, 350)
 
 
+def test_online_sort_groups_localized_ids_and_regional_aliases() -> None:
+    entries = [
+        ListCardEntry("A", "Phantom Blade Zero™", game_id="PPSA001"),
+        ListCardEntry("B", "Other Game"),
+        ListCardEntry("C", "影之刃零", game_id="PPSA002"),
+        ListCardEntry("D", "Localized Title", game_id="PPSA002"),
+        ListCardEntry("E", "other game®"),
+    ]
+    result = cards.sort_online_entries(entries)
+    assert [entry.name for entry in result] == ["A", "C", "D", "B", "E"]
+    assert entries[0].current_game == "Phantom Blade Zero™"
+    assert [entry.name for entry in entries] == ["A", "B", "C", "D", "E"]
+
+
+def test_online_sort_keeps_sequels_and_editions_separate() -> None:
+    entries = [ListCardEntry(str(i), game) for i, game in enumerate(
+        ["Game 2", "Game", "Game Deluxe", "Game 2", "Game"]
+    )]
+    assert [entry.name for entry in cards.sort_online_entries(entries)] == ["1", "4", "0", "3", "2"]
+    assert cards.sort_online_entries([]) == []
+
+
+def test_online_sort_most_played_first_after_merging_aliases() -> None:
+    entries = [ListCardEntry(str(i), game) for i, game in enumerate([
+        "Alpha", "影之刃零", "Beta", "Phantom Blade Zero", "Beta", "影之刃零",
+    ])]
+    assert [entry.name for entry in cards.sort_online_entries(entries)] == [
+        "1", "3", "5", "2", "4", "0",
+    ]
+
+
 def test_online_overview_replaces_unhealthy_platform_rows() -> None:
     content = render_online_overview(
         {

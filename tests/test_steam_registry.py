@@ -17,6 +17,11 @@ from qq_bot.steam_registry import (
 )
 
 
+@pytest.fixture(autouse=True)
+def isolate_proxy(monkeypatch):
+    monkeypatch.delenv('STEAM_HTTP_PROXY', raising=False)
+
+
 def subscription(**overrides: object) -> SteamSubscription:
     values: dict[str, object] = {
         "steam_id": "76561198000000000",
@@ -204,6 +209,61 @@ def test_steam_api_retries_read_error_and_enables_proxy_fallback(
     assert trust_modes == [False, True]
 
 
+def test_steam_explicit_proxy_is_used_and_403_is_not_retried(monkeypatch, caplog):
+    from unittest.mock import AsyncMock
+    from qq_bot.steam_registry import SteamError
+    client = SteamClient()
+    options = []
+    request = httpx.Request('GET', 'https://api.steampowered.com/?key=SECRET')
+    class ProxyClient:
+        def __init__(self, **kwargs):
+            options.append(kwargs)
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): pass
+        async def get(self, *args, **kwargs):
+            return httpx.Response(403, request=request)
+    monkeypatch.setenv('STEAM_HTTP_PROXY', 'http://127.0.0.1:7897')
+    monkeypatch.setattr(client, '_key', lambda: 'a' * 32)
+    monkeypatch.setattr(steam_module.httpx, 'AsyncClient', ProxyClient)
+    sleep = AsyncMock()
+    monkeypatch.setattr(steam_module.asyncio, 'sleep', sleep)
+    with caplog.at_level('INFO'), pytest.raises(SteamError) as error:
+        asyncio.run(client._get('ISteamUserStats/GetPlayerAchievements/v1/', _quiet_statuses={403}))
+    assert len(options) == 1
+    assert options[0]['proxy'] == 'http://127.0.0.1:7897'
+    assert options[0]['trust_env'] is False
+    assert error.value.steam_status == 403
+    assert 'SECRET' not in caplog.text
+    assert 'Steam API request failed' not in caplog.text
+    sleep.assert_not_awaited()
+
+
+def test_steam_attempt_deadline_leaves_time_for_retry(monkeypatch):
+    client = SteamClient()
+    attempts = []
+    timeout = asyncio.timeout
+    sleep = asyncio.sleep
+    class SlowClient:
+        def __init__(self, **kwargs): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): pass
+        async def get(self, *args, **kwargs):
+            attempts.append(True)
+            if len(attempts) == 1:
+                await sleep(1)
+            return httpx.Response(200, json={'response': {}}, request=httpx.Request('GET', 'https://test'))
+    async def no_sleep(*args): pass
+    def short_timeout(delay):
+        assert delay == 8
+        return timeout(.02)
+    monkeypatch.setattr(client, '_key', lambda: 'a' * 32)
+    monkeypatch.setattr(steam_module.httpx, 'AsyncClient', SlowClient)
+    monkeypatch.setattr(steam_module.asyncio, 'timeout', short_timeout)
+    monkeypatch.setattr(steam_module.asyncio, 'sleep', no_sleep)
+    assert asyncio.run(client._get('ISteamUser/GetPlayerSummaries/v2/')) == {'response': {}}
+    assert len(attempts) == 2
+
+
 def test_game_name_persists_across_client_restart(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -286,6 +346,53 @@ def test_game_cover_falls_back_to_store_metadata(monkeypatch: pytest.MonkeyPatch
 
 async def _async_value(value: object) -> object:
     return value
+
+
+def test_missing_cover_is_retried(monkeypatch):
+    client = SteamClient()
+    monkeypatch.setattr(client, "_url_available", lambda url: _async_value(False))
+    monkeypatch.setattr(client, "_steamgriddb_cover", lambda app: _async_value(None))
+    replies = iter(({}, {"header_image": "https://example.com/recovered.jpg"}))
+    monkeypatch.setattr(client, "game_details", lambda app: _async_value(next(replies)))
+    assert asyncio.run(client.game_cover("123")) is None
+    assert asyncio.run(client.game_cover("123")) == "https://example.com/recovered.jpg"
+
+
+def test_portrait_timeout_still_tries_store(monkeypatch):
+    client = SteamClient()
+    async def timeout(*args):
+        raise asyncio.TimeoutError
+    monkeypatch.setattr(client, "_url_available", timeout)
+    monkeypatch.setattr(client, "_steamgriddb_cover", timeout)
+    monkeypatch.setattr(client, "game_details", lambda app: _async_value({"header_image": "https://example.com/header.jpg"}))
+    assert asyncio.run(client.game_cover("123")) == "https://example.com/header.jpg"
+
+
+def test_grid_404_falls_back_to_store_without_warning(monkeypatch, caplog):
+    client = SteamClient()
+    calls = []
+
+    class MissingGridClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            pass
+
+        async def get(self, url, **kwargs):
+            calls.append(url)
+            return httpx.Response(404, request=httpx.Request("GET", url))
+
+    monkeypatch.setattr(steam_module.httpx, "AsyncClient", lambda **kwargs: MissingGridClient())
+    monkeypatch.setattr(client, "_steamgriddb_key", lambda: "test-key")
+    monkeypatch.setattr(client, "_url_available", lambda url: _async_value(False))
+    monkeypatch.setattr(client, "game_details", lambda app_id: _async_value({
+        "header_image": "https://example.com/header.jpg",
+    }))
+    assert asyncio.run(client.game_cover("2802290")) == "https://example.com/header.jpg"
+    assert asyncio.run(client.game_cover("2802290")) == "https://example.com/header.jpg"
+    assert len(calls) == 1
+    assert not [record for record in caplog.records if record.levelno >= 30]
 
 
 def test_game_cover_prefers_steamgriddb_portrait_before_store_header(

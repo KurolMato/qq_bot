@@ -215,6 +215,9 @@ def _people_presence_records(payload: Any) -> dict[str, Mapping[str, Any]]:
                     "state": _mapping_value(detail, "state") or "Active",
                     "placement": "Full",
                     "isGame": True,
+                    "imageUrl": _first_url(detail) or (
+                        _first_url(title_presence) if primary_title_id == title_id else None
+                    ),
                 })
         records[xuid] = {
             "xuid": xuid,
@@ -228,9 +231,13 @@ def _first_url(value: Any) -> str | None:
     preferred = ("imageUrl", "imageUri", "gameImageUrl", "displayImage", "boxArt", "tileImage", "url")
     if isinstance(value, Mapping):
         for key in preferred:
-            candidate = value.get(key)
-            if isinstance(candidate, str) and candidate.startswith(("https://", "http://")):
-                return candidate
+            candidate = _mapping_value(value, key)
+            if isinstance(candidate, str):
+                candidate = candidate.strip()
+                if candidate.startswith("//"):
+                    return "https:" + candidate
+                if candidate.startswith(("https://", "http://")):
+                    return candidate
         for key, child in value.items():
             if "logo" in str(key).casefold():
                 continue
@@ -584,7 +591,9 @@ class XboxClient:
             return None
 
         async def direct(client: Any) -> str | None:
-            return _first_url(self._dump(await client.titlehub.get_title_info(str(title_id))))
+            # Extra decorations can fail validation for games without achievements
+            # or complete store details; only request the images we actually use.
+            return _first_url(self._dump(await client.titlehub.get_title_info(str(title_id), fields=["image"])))
 
         try:
             return await self._direct_call("title-cover", direct)
@@ -650,8 +659,12 @@ class XboxPresenceMonitor:
                 self._presence_summaries[item.xuid] = summary
             activity = parse_xbox_activity(item, presence)
             game = _active_game(presence)
+            previous_name = _stable_game_name(item.current_game)
+            if (activity.game_key and not activity.game_image_url and previous_name
+                    and activity.game_key == previous_name.casefold()):
+                activity = replace(activity, game_image_url=item.current_game_image_url)
             if activity.game_key and not activity.game_image_url and game:
-                cover = await self.client.game_cover(str(game.get("id") or ""))
+                cover = await self.client.game_cover(str(game.get("id") or game.get("titleId") or ""))
                 if cover:
                     activity = replace(activity, game_image_url=cover)
             image_url = activity.game_image_url or (

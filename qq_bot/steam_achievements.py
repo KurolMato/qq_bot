@@ -2,6 +2,7 @@
 import asyncio
 import json
 import logging
+import math
 import time
 from pathlib import Path
 
@@ -21,7 +22,7 @@ class AchievementUnavailable(ValueError):
 
 
 class AchievementRetrySoon(RuntimeError):
-    """Steam has a schema but the player's newly synced progress is not ready yet."""
+    """Player progress is unreadable; retry without assuming the cause."""
 
 
 def parse_progress(payload):
@@ -38,15 +39,16 @@ def parse_progress(payload):
     return result
 
 
-def achievement_sync_http_error(error):
+def achievement_retry_http_status(error):
     current = error
     while current:
         response = getattr(current, 'response', None)
-        if (getattr(response, 'status_code', None) in {400, 403} or
-                getattr(current, 'steam_status', None) in {400, 403}):
-            return True
+        for status in (getattr(response, 'status_code', None),
+                       getattr(current, 'steam_status', None)):
+            if status in {400, 403}:
+                return status
         current = current.__cause__
-    return False
+    return None
 
 
 def _playtime_minutes(data, app):
@@ -88,7 +90,7 @@ class AchievementMonitor:
         now = time.time()
         names = None if force else await asyncio.to_thread(self.store.schema, app, now)
         if names is None:
-            data = await self.client._get('ISteamUserStats/GetSchemaForGame/v2/', appid=app, l='english')
+            data = await self.client._get('ISteamUserStats/GetSchemaForGame/v2/', appid=app, l='schinese')
             values = data.get('game', {}).get('availableGameStats', {}).get('achievements')
             if not isinstance(values, list) or not values:
                 raise AchievementUnavailable('Game has no published achievement schema')
@@ -96,6 +98,9 @@ class AchievementMonitor:
             if len(names) != len(values):
                 raise ValueError('Incomplete achievement schema')
             await asyncio.to_thread(self.store.save_schema, app, names, now)
+            details = {v['name']: {key: v[key] for key in ('displayName', 'description', 'icon')
+                                  if isinstance(v.get(key), str)} for v in values}
+            await asyncio.to_thread(self.store.save_card_metadata, app, 'schema', details, now + 86400)
         return names
 
     async def check(self, sid, app, title):
@@ -104,10 +109,13 @@ class AchievementMonitor:
         schema = await self.schema(app)
         try:
             raw = await self.client._get('ISteamUserStats/GetPlayerAchievements/v1/', steamid=sid,
-                                         appid=app, l='english', _quiet_statuses={400, 403})
+                                         appid=app, l='schinese', _quiet_statuses={400, 403})
         except Exception as exc:
-            if achievement_sync_http_error(exc):
-                raise AchievementRetrySoon('Player achievements are not ready; retry shortly') from None
+            status = achievement_retry_http_status(exc)
+            if status is not None:
+                raise AchievementRetrySoon(
+                    f'Player achievements are unreadable (HTTP {status}; cause unconfirmed)'
+                ) from None
             raise
         progress = parse_progress(raw)
         complete = all(v[0] for v in progress.values())
@@ -117,9 +125,19 @@ class AchievementMonitor:
             raise ValueError('Player achievements and current schema disagree; ignoring sample')
         now = time.time()
         unlocks = [v[1] for v in progress.values()]
-        valid_times = all(isinstance(t, (int, float)) and 0 < t <= now for t in unlocks)
+        valid_times = all(type(t) in (int, float) and math.isfinite(t) and 0 < t <= now for t in unlocks)
         payload = dict(title=title, total=len(schema), achieved_at=max(unlocks) if complete and valid_times else None,
                        detected_at=now)
+        if complete and valid_times:
+            payload['first_achieved_at'] = min(unlocks)
+            last_ids = sorted(name for name, (_, stamp) in progress.items() if stamp == max(unlocks))
+            payload['last_achievement_id'] = last_ids[0]
+            payload['last_achievement_count'] = len(last_ids)
+            details = await asyncio.to_thread(self.store.card_metadata, app, 'schema', now) or {}
+            detail = details.get(last_ids[0], {})
+            payload.update(achievement_name=detail.get('displayName'),
+                           achievement_description=detail.get('description'),
+                           achievement_icon=detail.get('icon'))
         items = await self.subscriptions()
         groups = {s.group_id for s in items if s.steam_id == sid}
         if groups:
@@ -173,7 +191,44 @@ class AchievementMonitor:
                 break
             logger.info('Achievement playtime missing: %s/%s source=%s; no matching lifetime minutes',
                         sid, app, endpoint)
+        achievement_id = result.get('last_achievement_id')
+        if achievement_id:
+            try:
+                result['achievement_percent'] = await self.global_percentage(app, achievement_id)
+            except Exception as exc:
+                logger.warning('Achievement global percentage unavailable: app=%s error=%s',
+                               app, type(exc).__name__)
         return result
+
+    async def global_percentage(self, app, achievement_id):
+        now = time.time()
+        cached = await asyncio.to_thread(self.store.card_metadata, app, 'percentages', now)
+        if cached is None:
+            try:
+                data = await asyncio.wait_for(self.client._get(
+                    'ISteamUserStats/GetGlobalAchievementPercentagesForApp/v2/', gameid=app), 4)
+                values = data.get('achievementpercentages', {}).get('achievements')
+                if not isinstance(values, list):
+                    raise ValueError('Invalid global achievement percentages')
+                cached = {}
+                for value in values:
+                    if not isinstance(value, dict) or not isinstance(value.get('name'), str):
+                        continue
+                    percent = value.get('percent')
+                    if isinstance(percent, bool):
+                        continue
+                    try:
+                        percent = float(percent)
+                    except (TypeError, ValueError):
+                        continue
+                    if math.isfinite(percent) and 0 <= percent <= 100:
+                        cached[value['name']] = percent
+            except Exception:
+                # Cache failures briefly so simultaneous completions do not hammer Steam.
+                await asyncio.to_thread(self.store.save_card_metadata, app, 'percentages', {}, now + 300)
+                raise
+            await asyncio.to_thread(self.store.save_card_metadata, app, 'percentages', cached, now + 86400)
+        return cached.get(achievement_id)
 
     async def deliver(self):
         items = await self.subscriptions()
@@ -246,11 +301,11 @@ class AchievementMonitor:
                     logger.info('Steam achievement data skipped: %s (%s); retry in 7d', key, exc)
                     continue
                 except AchievementRetrySoon as exc:
-                    # A freshly unlocked final achievement can briefly leave the
-                    # schema and player progress out of sync. Do not suppress it
-                    # as a privacy/unsupported result or the completion can be lost.
-                    await asyncio.to_thread(self.store.schedule, key, time.time(), 600, False)
-                    logger.info('Steam achievement data pending sync: %s (%s); retry in 10m', key, exc)
+                    # 400/403 alone cannot distinguish privacy from delayed sync.
+                    # Protect this short cooldown from active-play expedition;
+                    # avoid a week-long pause that could miss a completion.
+                    delay = await asyncio.to_thread(self.store.retry_unreadable, key, time.time())
+                    logger.info('Steam achievement data temporarily unreadable: %s (%s); retry in %dm', key, exc, delay // 60)
                     continue
                 except Exception as exc:
                     failed = True

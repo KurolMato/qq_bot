@@ -1,4 +1,15 @@
 from qq_bot.links import extract_bilibili_urls, extract_video_urls
+import pytest
+
+
+@pytest.mark.parametrize("url", [
+    "https://www.bilibili.com/opus/917675369769730096?from=search",
+    "https://t.bilibili.com/917675369769730096",
+    "https://www.bilibili.com/read/cv123456",
+])
+def test_extracts_bilibili_image_posts(url):
+    assert extract_video_urls({"data": {"url": url}}) == [url]
+    assert extract_bilibili_urls(url) == [url]
 
 
 def test_extracts_mobile_share_text() -> None:

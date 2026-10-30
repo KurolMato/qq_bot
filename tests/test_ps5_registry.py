@@ -35,6 +35,46 @@ def subscription(**overrides: object) -> Ps5Subscription:
     return Ps5Subscription(**values)  # type: ignore[arg-type]
 
 
+def test_title_id_migrates_and_clears_with_offline_presence(tmp_path: Path) -> None:
+    path = tmp_path / "ps5.db"
+    registry = Ps5Registry(path)
+    registry.add(subscription(current_game="Game", current_game_title_id="PPSA001"))
+    assert registry.list_group("200")[0].current_game_title_id == "PPSA001"
+    with sqlite3.connect(path) as db:
+        db.execute("ALTER TABLE ps5_subscriptions DROP COLUMN current_game_title_id")
+    registry = Ps5Registry(path)
+    item = registry.list_group("200")[0]
+    assert item.current_game == "Game"
+    assert item.current_game_title_id is None
+    presence = {"availability": "available", "gameTitleInfoList": [
+        {"titleName": "中文游戏", "npTitleId": "PPSA002"}
+    ]}
+    activity = parse_ps5_activity(item, presence)
+    assert activity.game_key
+    registry.update_presence(item, activity, status="active", initialised=True, title_id="PPSA002")
+    assert registry.list_group("200")[0].current_game_title_id == "PPSA002"
+    registry.update_presence(item, parse_ps5_activity(item, {}), status="active", initialised=True)
+    assert registry.list_group("200")[0].current_game_title_id is None
+
+
+def test_poll_persists_title_id_without_external_calls(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock, Mock
+    import qq_bot.ps5_registry as module
+
+    registry = Ps5Registry(tmp_path / "poll.db")
+    registry.add(subscription(current_game="中文游戏", initialised=True))
+    client = SimpleNamespace(configured=True, presences=AsyncMock(return_value={
+        "basicPresences": [{"accountId": "1234567890", "gameTitleInfoList": [
+            {"titleName": "中文游戏", "npTitleId": "PPSA003", "npTitleIconUrl": "https://example.com/game.png"}
+        ]}]
+    }))
+    monkeypatch.setattr(module.nonebot, "get_bots", lambda: {})
+    monkeypatch.setattr(module, "game_time_tracker", Mock())
+    asyncio.run(Ps5PresenceMonitor(registry, client).poll_once())
+    assert registry.list_group("200")[0].current_game_title_id == "PPSA003"
+
+
 @pytest.mark.parametrize("value", ["Player-One", "abc", "A_12345678901234"])
 def test_normalize_online_id(value: str) -> None:
     assert normalize_online_id(value) == value
@@ -202,10 +242,16 @@ def test_avatar_refresh_once_per_local_date(tmp_path: Path, monkeypatch) -> None
 
     async def run():
         await monitor.refresh_avatars_if_due()
+        task = monitor._avatar_task
+        assert task is not None
+        await task
         await monitor.refresh_avatars_if_due()
         assert monitor.refresh_avatars.await_count == 1
         Clock.current = datetime(2026, 9, 18)
         await monitor.refresh_avatars_if_due()
+        task = monitor._avatar_task
+        assert task is not None
+        await task
         assert monitor.refresh_avatars.await_count == 2
 
     asyncio.run(run())
@@ -248,16 +294,51 @@ def test_monitor_reports_poll_timeout(tmp_path, monkeypatch):
     assert failures == [("ps5", "PSN 请求超时，正在自动重试")]
 
 
-def test_avatar_timeout_keeps_daily_refresh_bounded(tmp_path, monkeypatch):
-    from unittest.mock import AsyncMock
-    import qq_bot.ps5_registry as module
+def test_avatar_refresh_runs_in_background_without_blocking(tmp_path):
+    import time
 
     monitor = Ps5PresenceMonitor(Ps5Registry(tmp_path / "ps5.db"), Ps5Client())
-    monitor.refresh_avatars = AsyncMock(side_effect=TimeoutError)
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def slow_refresh():
+        started.set()
+        await release.wait()
+        return {"checked": 1, "updated": 0, "failed": 0}
+
+    monitor.refresh_avatars = slow_refresh
+
+    async def run():
+        before = time.monotonic()
+        await monitor.refresh_avatars_if_due()
+        assert time.monotonic() - before < 0.5
+        task = monitor._avatar_task
+        assert task is not None
+        await started.wait()
+        release.set()
+        await task
+
+    asyncio.run(run())
+
+
+def test_stop_cancels_background_avatar_refresh(tmp_path):
+    monitor = Ps5PresenceMonitor(Ps5Registry(tmp_path / "ps5.db"), Ps5Client())
+    cancelled = asyncio.Event()
+
+    async def slow_refresh():
+        try:
+            await asyncio.sleep(60)
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
+
+    monitor.refresh_avatars = slow_refresh
 
     async def run():
         await monitor.refresh_avatars_if_due()
-        await monitor.refresh_avatars_if_due()
+        await asyncio.sleep(0)
+        await monitor.stop()
+        assert cancelled.is_set()
+        assert monitor._avatar_task is None
 
     asyncio.run(run())
-    assert monitor.refresh_avatars.await_count == 1

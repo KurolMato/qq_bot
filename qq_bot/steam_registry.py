@@ -348,24 +348,33 @@ class SteamClient:
         quiet_statuses = set(params.pop("_quiet_statuses", ()))
         params["key"] = self._key()
         last_error: Exception | None = None
+        proxy = os.getenv("STEAM_HTTP_PROXY", "").strip()
+        if proxy and (urlparse(proxy).scheme not in {"http", "https"} or not urlparse(proxy).hostname):
+            raise SteamError("STEAM_HTTP_PROXY 格式无效，请填写 HTTP/HTTPS 代理地址。")
         # A number of Steam edge nodes occasionally close the connection while
         # response headers are being read. httpx exposes that as ReadError,
         # which is a TransportError and is safe to retry. Try direct first,
         # then allow an environment proxy as a fallback on this computer.
-        trust_modes = (False, True, True)
+        trust_modes = (False, False, False) if proxy else (False, True, True)
         for attempt, trust_env in enumerate(trust_modes):
             try:
-                timeout = httpx.Timeout(35.0, connect=15.0)
+                # Three 35-second phase timeouts previously exceeded the
+                # achievement worker's entire 30-second budget on attempt one.
+                # Bound each attempt, leaving room for actual recovery.
+                timeout = httpx.Timeout(8.0, connect=4.0)
                 context = truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
-                async with httpx.AsyncClient(
-                    timeout=timeout,
-                    follow_redirects=True,
-                    verify=context,
-                    trust_env=trust_env,
-                ) as client:
-                    response = await client.get(f"{API_ROOT}/{path.lstrip('/')}", params=params)
-                    response.raise_for_status()
-                    payload = response.json()
+                options = {"proxy": proxy} if proxy else {}
+                async with asyncio.timeout(8):
+                    async with httpx.AsyncClient(
+                        timeout=timeout,
+                        follow_redirects=True,
+                        verify=context,
+                        trust_env=trust_env,
+                        **options,
+                    ) as client:
+                        response = await client.get(f"{API_ROOT}/{path.lstrip('/')}", params=params)
+                        response.raise_for_status()
+                        payload = response.json()
                 if not isinstance(payload, Mapping):
                     raise ValueError("invalid Steam response")
                 return payload
@@ -373,7 +382,7 @@ class SteamClient:
                 last_error = exc
                 if exc.response.status_code < 500 and exc.response.status_code != 429:
                     break
-            except httpx.TransportError as exc:
+            except (httpx.TransportError, TimeoutError) as exc:
                 last_error = exc
             except Exception as exc:
                 last_error = exc
@@ -388,7 +397,9 @@ class SteamClient:
                 await asyncio.sleep(1 << attempt)
         assert last_error is not None
         status = getattr(getattr(last_error, "response", None), "status_code", None)
-        log = logger.info if status in quiet_statuses else logger.warning
+        # The achievement monitor records the same expected status together
+        # with its protected cooldown; avoid logging each 403 twice.
+        log = logger.debug if status in quiet_statuses else logger.warning
         log(
             "Steam API request failed after retries: endpoint=%s status=%s error=%s",
             path, status if status is not None else "network", type(last_error).__name__,
@@ -478,7 +489,8 @@ class SteamClient:
         finally:
             if task.done():
                 self._metadata_tasks.pop(app_id, None)
-        self._remember(self._metadata_cache, app_id, details)
+        if details:
+            self._remember(self._metadata_cache, app_id, details)
         return details
 
     async def game_name(self, app_id: str) -> str | None:
@@ -521,6 +533,10 @@ class SteamClient:
                         "nsfw": "false",
                     },
                 )
+                if response.status_code == 404:
+                    # A missing artwork mapping is a normal cache miss. The
+                    # caller continues with Steam's own store header.
+                    return None
                 response.raise_for_status()
                 payload = response.json()
             values = payload.get("data", []) if isinstance(payload, Mapping) else []
@@ -552,10 +568,17 @@ class SteamClient:
             "https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/"
             f"{app_id}/library_600x900_2x.jpg"
         )
-        if await self._url_available(conventional):
+        try:
+            available = await asyncio.wait_for(self._url_available(conventional), timeout=3)
+        except asyncio.TimeoutError:
+            available = False
+        if available:
             self._remember(self._cover_cache, app_id, conventional)
             return conventional
-        steamgriddb = await self._steamgriddb_cover(app_id)
+        try:
+            steamgriddb = await asyncio.wait_for(self._steamgriddb_cover(app_id), timeout=4)
+        except asyncio.TimeoutError:
+            steamgriddb = None
         if steamgriddb:
             self._remember(self._cover_cache, app_id, steamgriddb)
             return steamgriddb
@@ -566,7 +589,8 @@ class SteamClient:
         except Exception:
             logger.warning("Unable to resolve Steam cover for app %s", app_id, exc_info=True)
             result = None
-        self._remember(self._cover_cache, app_id, result)
+        if result:
+            self._remember(self._cover_cache, app_id, result)
         return result
 
     async def status(self) -> None:
@@ -709,7 +733,10 @@ class SteamPresenceMonitor:
             if should_notify and bots:
                 try:
                     message = await asyncio.wait_for(
-                        build_activity_message(item.nickname or activity.account_name, activity), timeout=15
+                        build_activity_message(
+                            item.nickname or activity.account_name, activity,
+                            avatar_cache_key=f"steam:{item.steam_id}",
+                        ), timeout=15
                     )
                     await asyncio.wait_for(
                         bots[0].send_group_msg(

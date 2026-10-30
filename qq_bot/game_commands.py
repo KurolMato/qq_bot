@@ -72,6 +72,7 @@ async def _online_platform_entries(group_id: str) -> dict[str, list[ListCardEntr
                 item.current_game,
                 item.avatar_url,
                 item.current_game_image_url,
+                game_id=item.current_game_title_id,
             )
             for item in ps_items
             if item.current_game
@@ -242,10 +243,23 @@ async def handle_game_command(
         "/game add 商店链接\n"
         "/game list 月份\n"
         "/game list 年份  横向拼接月表（当年从本月开始）\n"
-        "/game ol  查看四平台正在游玩的玩家",
+        "/game ol  查看四平台正在游玩的玩家（也可用 /在线、/谁在线）",
     )
 
 
 @mentioned_game_command.handle()
 async def handle_mentioned_game(bot: Bot, event: GroupMessageEvent) -> None:
     await handle_game_command(bot, event, Message(event.get_plaintext().strip()[4:].strip()))
+
+
+online_command = on_command(
+    "在线",
+    aliases={"谁在线", "在线玩家", "在线列表"},
+    priority=10,
+    block=True,
+)
+
+
+@online_command.handle()
+async def handle_online_command(bot: Bot, event: GroupMessageEvent) -> None:
+    await handle_game_command(bot, event, Message("ol"))

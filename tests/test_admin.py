@@ -63,12 +63,13 @@ def test_admin_updates_only_allowlisted_configuration(tmp_path: Path, monkeypatc
 
     response = client.post(
         "/api/admin/config",
-        json={"values": {"QQ_ALLOWED_GROUPS": "100,200", "STEAM_POLL_INTERVAL": "90"}},
+        json={"values": {"QQ_ALLOWED_GROUPS": "100,200", "STEAM_POLL_INTERVAL": "90", "STEAM_HTTP_PROXY": "http://127.0.0.1:7897"}},
     )
     assert response.status_code == 200
     content = env_path.read_text(encoding="utf-8")
     assert "QQ_ALLOWED_GROUPS=100,200" in content
     assert "STEAM_POLL_INTERVAL=90" in content
+    assert "STEAM_HTTP_PROXY=http://127.0.0.1:7897" in content
     assert "UNTOUCHED=value" in content
 
     rejected = client.post("/api/admin/config", json={"values": {"PATH": "bad"}})

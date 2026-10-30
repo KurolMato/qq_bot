@@ -1,4 +1,5 @@
 import sys
+import asyncio
 from types import SimpleNamespace
 
 import pytest
@@ -31,10 +32,9 @@ def test_personal_image(period, tmp_path):
     print(path)
 
 
-@pytest.mark.asyncio
-async def test_empty_personal_returns_image():
+def test_empty_personal_returns_image():
     snapshot = LeaderboardSnapshot(datetime.now(timezone.utc), None, (), "day")
-    message = await build_leaderboard_message(snapshot, personal_name="示例玩家")
+    message = asyncio.run(build_leaderboard_message(snapshot, personal_name="示例玩家"))
     assert len(message) == 1
     assert message[0].type == "image"
 
@@ -73,7 +73,7 @@ def test_binding_resolves_platform_names_and_shared_nicknames(monkeypatch):
     assert resolve_binding_name("g1", "Switch") == "小明"
     assert resolve_binding_name("g1", "Xbox Player") == "Xbox Player"
     with pytest.raises(ValueError, match="多个成员"):
-        resolve_binding_name("g1", "mat")
+        resolve_binding_name("g1", "示例")
     with pytest.raises(ValueError, match="没有找到"):
         resolve_binding_name("g2", "示例玩家")
     with pytest.raises(ValueError, match="用法"):

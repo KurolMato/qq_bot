@@ -124,8 +124,13 @@ def run_job(job_id: str, url: str) -> None:
     job_dir = DOWNLOAD_DIR / job_id
     try:
         store.update(job_id, status="downloading")
-        file_path, logs = download_to_mp4(url, job_dir, TIMEOUT_SECONDS)
-        store.update(job_id, status="completed", file_path=file_path, log_tail=logs)
+        result, logs = download_to_mp4(url, job_dir, TIMEOUT_SECONDS)
+        if isinstance(result, list):
+            if not result:
+                raise NoVideoError("该作品没有图片")
+            store.update(job_id, status="completed", image_paths=tuple(result), title=getattr(result, "title", ""), log_tail=logs)
+        else:
+            store.update(job_id, status="completed", file_path=result, log_tail=logs)
     except subprocess.TimeoutExpired:  # type: ignore[name-defined]
         _mark_job_failed(job_id, "下载超时")
     except NoVideoError:
@@ -289,6 +294,24 @@ def get_file(job_id: str) -> FileResponse:
     if job.status != "completed" or job.file_path is None or not job.file_path.is_file():
         raise HTTPException(status_code=409, detail="文件尚未就绪")
     return FileResponse(job.file_path, filename=job.file_path.name, media_type="video/mp4")
+
+
+@app.get(
+    "/api/jobs/{job_id}/images/{index}",
+    dependencies=[Depends(require_video_api_access)],
+)
+def get_image(job_id: str, index: int) -> FileResponse:
+    job = store.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    if job.status != "completed":
+        raise HTTPException(status_code=409, detail="图片尚未就绪")
+    if index < 0 or index >= len(job.image_paths):
+        raise HTTPException(status_code=404, detail="图片不存在")
+    path = job.image_paths[index]
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="图片已清理")
+    return FileResponse(path, filename=path.name)
 
 
 @app.delete(

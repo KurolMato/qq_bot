@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from io import BytesIO
 from pathlib import Path
 from typing import Any, Mapping
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlsplit
 
 import httpx
 import nonebot
@@ -171,7 +171,59 @@ def _resize_image(content: bytes, max_width: int, max_height: int) -> bytes:
         return output.getvalue()
 
 
+STEAM_AVATAR_HOSTS = (
+    "avatars.steamstatic.com",
+    "avatars.akamai.steamstatic.com",
+    "avatars.fastly.steamstatic.com",
+)
+STEAM_AVATAR_ROUTE_TIMEOUT = 1.5
+
+
+def _steam_avatar_urls(url: str) -> tuple[str, ...]:
+    parts = urlsplit(url)
+    # Rewrite only the known HTTPS avatar hosts. Preserve the image path,
+    # query and original URL used as the persistent cache key.
+    if parts.scheme != "https" or parts.netloc.casefold() not in STEAM_AVATAR_HOSTS:
+        return (url,)
+    return (url, *(
+        parts._replace(netloc=host).geturl()
+        for host in STEAM_AVATAR_HOSTS if host != parts.netloc.casefold()
+    ))
+
+
+def _verify_avatar(content: bytes | None) -> None:
+    if not content:
+        raise ValueError("empty Steam avatar response")
+    with Image.open(BytesIO(content)) as image:
+        image.verify()
+
+
 async def _download_image(url: str | None) -> bytes | None:
+    if not url:
+        return None
+    urls = _steam_avatar_urls(url)
+    if len(urls) == 1:
+        return await _download_image_single(url)
+    last_error: Exception | None = None
+    for candidate in urls:
+        try:
+            # Three routes share at most 4.5 seconds of network time, leaving
+            # room for avatar cache fallback inside the caller's 6s deadline.
+            content = await asyncio.wait_for(
+                _download_image_single(candidate), timeout=STEAM_AVATAR_ROUTE_TIMEOUT,
+            )
+            await asyncio.to_thread(_verify_avatar, content)
+            if candidate != url:
+                logger.info("Steam avatar downloaded through fallback CDN: %s", urlsplit(candidate).hostname)
+            return content
+        except Exception as exc:
+            last_error = exc
+            logger.debug("Steam avatar CDN unavailable: %s (%s)", urlsplit(candidate).hostname, type(exc).__name__)
+    assert last_error is not None
+    raise last_error
+
+
+async def _download_image_single(url: str | None) -> bytes | None:
     if not url:
         return None
     last_error: Exception | None = None
@@ -215,8 +267,15 @@ async def _download_image(url: str | None) -> bytes | None:
     return response.content
 
 
-async def _download_card_image(url: str | None, kind: str) -> bytes | None:
+async def _download_card_image(
+    url: str | None, kind: str, *, avatar_cache_key: str | None = None,
+) -> bytes | None:
     try:
+        if kind == "avatar" and avatar_cache_key:
+            # list_cards reuses this module's rendering/download helpers.
+            from .list_cards import _load_avatar_with_fallback
+
+            return await _load_avatar_with_fallback(url, avatar_cache_key)
         return await _download_image(url)
     except Exception as exc:
         logger.warning(
@@ -229,12 +288,17 @@ async def _download_card_image(url: str | None, kind: str) -> bytes | None:
 
 
 async def small_image_segment(
-    url: str | None, max_width: int, max_height: int
+    url: str | None, max_width: int, max_height: int, *, avatar_cache_key: str | None = None,
 ) -> MessageSegment | None:
-    if not url:
+    if not url and not avatar_cache_key:
         return None
     try:
-        content = await _download_image(url)
+        if avatar_cache_key:
+            from .list_cards import _load_avatar_with_fallback
+
+            content = await _load_avatar_with_fallback(url, avatar_cache_key)
+        else:
+            content = await _download_image(url)
         if content is None:
             return None
         resized = await asyncio.to_thread(_resize_image, content, max_width, max_height)
@@ -391,10 +455,12 @@ def _render_activity_card(
     return output.getvalue()
 
 
-async def build_activity_message(display_name: str, activity: SwitchActivity) -> Message:
+async def build_activity_message(
+    display_name: str, activity: SwitchActivity, *, avatar_cache_key: str | None = None,
+) -> Message:
     try:
         avatar_content, cover_content = await asyncio.gather(
-            _download_card_image(activity.avatar_url, "avatar"),
+            _download_card_image(activity.avatar_url, "avatar", avatar_cache_key=avatar_cache_key),
             _download_card_image(activity.game_image_url, "cover"),
         )
         card = await asyncio.to_thread(

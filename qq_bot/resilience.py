@@ -24,7 +24,8 @@ class FailureBackoff:
 
     def failure(self) -> float:
         self.failures += 1
-        return min(self.base_delay * (2 ** (self.failures - 1)), self.max_delay)
+        # Long outages must not overflow when the consecutive count grows.
+        return min(self.base_delay * (2 ** min(self.failures - 1, 60)), self.max_delay)
 
     def should_log(self, now: float | None = None) -> bool:
         current = time.monotonic() if now is None else now

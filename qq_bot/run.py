@@ -15,6 +15,7 @@ load_dotenv(PROJECT_ROOT / ".env")
 from .switch_presence import start_switch_monitor, stop_switch_monitor
 from .switch_registry import start_nxapi_friend_monitor, stop_nxapi_friend_monitor
 from .ps5_registry import start_ps5_monitor, stop_ps5_monitor
+from .ps_trophies import start_trophy_monitor, stop_trophy_monitor
 from .steam_registry import start_steam_monitor, stop_steam_monitor
 from .xbox_registry import start_xbox_monitor, stop_xbox_monitor
 from .watchdog import start_watchdog, stop_watchdog
@@ -70,8 +71,10 @@ def main() -> None:
     (PROJECT_ROOT / "data").mkdir(parents=True, exist_ok=True)
     logger.add(
         PROJECT_ROOT / "data" / "qq-bot.log",
-        rotation="2 MB",
-        retention=3,
+        level="INFO",
+        rotation="5 MB",
+        retention=7,
+        diagnose=False,
         encoding="utf-8",
         enqueue=True,
     )
@@ -88,6 +91,8 @@ def main() -> None:
     driver.on_shutdown(stop_nxapi_friend_monitor)
     driver.on_startup(start_ps5_monitor)
     driver.on_shutdown(stop_ps5_monitor)
+    driver.on_startup(start_trophy_monitor)
+    driver.on_shutdown(stop_trophy_monitor)
     driver.on_startup(start_steam_monitor)
     driver.on_shutdown(stop_steam_monitor)
     driver.on_startup(start_achievement_monitor)
@@ -110,6 +115,8 @@ def main() -> None:
     nonebot.load_plugin("qq_bot.game_commands")
     nonebot.load_plugin("qq_bot.hltb_commands")
     nonebot.load_plugin("qq_bot.help_message")
+    nonebot.load_plugin("qq_bot.dsh_commands")
+    nonebot.load_plugin("qq_bot.group_dsh")
     nonebot.run()
 
 

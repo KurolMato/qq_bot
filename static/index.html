@@ -50,7 +50,17 @@ async function poll(id, deadline) {
     const response = await fetch(`/api/jobs/${id}`, {signal:controller.signal});
     const job = await response.json();
     if (!response.ok) { out.textContent = job.detail || '状态查询失败'; return; }
-    if (job.status === 'completed') { out.innerHTML = `转换完成：<a class="button" href="${job.download_url}">下载 MP4</a>`; return; }
+    if (job.status === 'completed') {
+      if (job.media_type === 'images') {
+        out.textContent = '图片下载完成：';
+        for (const [index, url] of job.image_urls.entries()) {
+          const link = document.createElement('a');
+          link.className = 'button'; link.href = url; link.textContent = `图片 ${index + 1}`;
+          out.append(document.createElement('br'), link);
+        }
+      } else { out.innerHTML = `转换完成：<a class="button" href="${job.download_url}">下载 MP4</a>`; }
+      return;
+    }
     if (job.status === 'failed') { out.textContent = `失败：${job.error || '转换失败'}`; return; }
     out.textContent = job.status === 'queued' ? '任务排队中…' : '正在下载并合并音视频…';
   } catch (error) {

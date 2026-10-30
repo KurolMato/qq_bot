@@ -24,12 +24,20 @@ class _Event:
 
 
 class _Bot:
+    self_id = "123456789"
+
     def __init__(self) -> None:
         self.sent_groups: list[int] = []
         self.replies: list[object] = []
+        self.messages: list[object] = []
+        self.forwarded: list[dict] = []
+
+    async def send_group_forward_msg(self, **kwargs):
+        self.forwarded.append(kwargs)
 
     async def send_group_msg(self, *, group_id: int, message: object) -> None:
         self.sent_groups.append(group_id)
+        self.messages.append(message)
 
     async def send(self, _event: object, message: object) -> None:
         self.replies.append(message)
@@ -171,6 +179,99 @@ def test_all_cancelled_waiters_finish_and_clean_orphan_conversion(monkeypatch, f
         assert not plugin._shared_videos
 
     asyncio.run(run())
+    _reset_plugin_state()
+
+
+def test_image_post_sends_only_images_in_order_then_cleans(monkeypatch) -> None:
+    _reset_plugin_state()
+    urls = tuple(f"http://127.0.0.1:8000/api/jobs/pictures/images/{i}" for i in range(12))
+    result = CompletedVideo("pictures", "", "", 0, image_urls=urls)
+    convert, delete = AsyncMock(return_value=result), AsyncMock()
+    monkeypatch.setattr(plugin, "service", SimpleNamespace(convert=convert, delete=delete))
+    monkeypatch.setattr(plugin, "config", SimpleNamespace(allowed_groups=frozenset()))
+    monkeypatch.setattr(plugin, "VIDEO_CLEANUP_DELAY_SECONDS", 0.0)
+    bot = _Bot()
+
+    async def run():
+        await plugin.handle_video_link(bot, _Event(100))
+        shared = plugin._shared_videos[VIDEO_URL]
+        await shared.cleanup_task
+
+    asyncio.run(run())
+    assert [len(message) for message in bot.messages] == [10, 2]
+    assert [segment.type for message in bot.messages for segment in message] == ["image"] * 12
+    assert [segment.data["file"] for message in bot.messages for segment in message] == list(urls)
+    delete.assert_awaited_once_with("pictures")
+    assert bot.replies == []
+    _reset_plugin_state()
+
+
+@pytest.mark.parametrize("source", ["https://www.xiaoheihe.cn/app/bbs/link/5a28725c3264", "https://www.bilibili.com/opus/917675369769730096", "https://www.douyin.com/note/7351234567890123456"])
+@pytest.mark.parametrize("count", [1, 4, 5, 6, 12])
+@pytest.mark.parametrize("title", ["", "图文标题 [CQ:at,qq=all]"])
+def test_image_forward_threshold_order_and_cleanup(monkeypatch, count, source, title):
+    _reset_plugin_state()
+    urls = tuple(f"http://127.0.0.1:8000/api/jobs/pictures/images/{i}" for i in range(count))
+    convert = AsyncMock(return_value=CompletedVideo("pictures", "", "", 0, image_urls=urls, title=title))
+    delete = AsyncMock()
+    monkeypatch.setattr(plugin, "extract_video_urls", lambda payload: [source])
+    monkeypatch.setattr(plugin, "service", SimpleNamespace(convert=convert, delete=delete))
+    monkeypatch.setattr(plugin, "config", SimpleNamespace(allowed_groups=frozenset()))
+    monkeypatch.setattr(plugin, "VIDEO_CLEANUP_DELAY_SECONDS", 0.0)
+    bot = _Bot()
+    async def run():
+        await plugin.handle_video_link(bot, _Event(100))
+        shared = plugin._shared_videos[source]
+        await shared.cleanup_task
+    asyncio.run(run())
+    is_douyin = "douyin.com" in source
+    sent_title = title if not is_douyin else ""
+    if count >= (5 if is_douyin else 6):
+        assert bot.messages == []
+        assert len(bot.forwarded) == 1
+        assert bot.forwarded[0]["group_id"] == 100
+        nodes = bot.forwarded[0]["messages"]
+        assert len(nodes) == count + bool(sent_title)
+        assert all(node.type == "node" and node.data["user_id"] == bot.self_id for node in nodes)
+        if is_douyin:
+            assert all(node.data["nickname"] == "抖音图文" for node in nodes)
+        if sent_title:
+            assert nodes[0].data["content"][0].type == "text"
+            assert nodes[0].data["content"][0].data["text"] == sent_title
+            nodes = nodes[1:]
+        assert [node.data["content"][0].data["file"] for node in nodes] == list(urls)
+    else:
+        assert bot.forwarded == []
+        assert len(bot.messages) == 1
+        message = bot.messages[0]
+        if sent_title:
+            assert message[0].type == "text"
+            assert message[0].data["text"] == sent_title + "\n"
+            message = message[1:]
+        assert [segment.data["file"] for segment in message] == list(urls)
+    assert bot.replies == []
+    delete.assert_awaited_once_with("pictures")
+    _reset_plugin_state()
+
+
+def test_xiaoheihe_failed_forward_releases_dedup_and_shared_lease(monkeypatch):
+    _reset_plugin_state()
+    source = "https://www.xiaoheihe.cn/app/bbs/link/5a28725c3264"
+    result = CompletedVideo("pictures", "", "", 0, image_urls=tuple(f"http://localhost/{i}" for i in range(6)))
+    monkeypatch.setattr(plugin, "extract_video_urls", lambda payload: [source])
+    monkeypatch.setattr(plugin, "service", SimpleNamespace(convert=AsyncMock(return_value=result), delete=AsyncMock()))
+    monkeypatch.setattr(plugin, "config", SimpleNamespace(allowed_groups=frozenset()))
+    monkeypatch.setattr(plugin, "VIDEO_CLEANUP_DELAY_SECONDS", 0.0)
+    bot = _Bot()
+    bot.send_group_forward_msg = AsyncMock(side_effect=RuntimeError("forward failed"))
+    async def run():
+        await plugin.handle_video_link(bot, _Event(100))
+        shared = plugin._shared_videos[source]
+        assert shared.leases == 0
+        assert ("100", source) not in plugin._recent
+        await shared.cleanup_task
+    asyncio.run(run())
+    assert bot.messages == []
     _reset_plugin_state()
 
 

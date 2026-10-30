@@ -84,27 +84,53 @@ def test_player_achievement_status_retries_soon(tmp_path, status):
             error.steam_status = status
             raise error
         m.client._get = bad
-        with pytest.raises(AchievementRetrySoon):
+        with pytest.raises(AchievementRetrySoon, match=f'HTTP {status}; cause unconfirmed'):
             await m.check('s', 'a', 'Game')
     asyncio.run(run())
 
 
-def test_sync_pending_is_retried_in_ten_minutes_not_suppressed(tmp_path):
+@pytest.mark.parametrize('active', [False, True])
+def test_unreadable_progress_preserves_ten_minute_retry_and_recovers(tmp_path, monkeypatch, active):
+    clock = [1000.0]
+    monkeypatch.setattr(time, 'time', lambda: clock[0])
     async def run():
         m, _ = make_monitor(tmp_path)
+        original_check = m.check
+        calls = []
         async def pending(*args):
+            calls.append(args)
             raise AchievementRetrySoon('syncing')
         m.check = pending
-        m.store.target('s', 'a', 'Game', time.time())
+        m.store.target('s', '123', 'Game', time.time())
+        if active:
+            m.observe_players({'s': {'gameid': '123', 'gameextrainfo': 'Game'}})
         async def noop():
             pass
         m.deliver = noop
-        before = time.time()
         await m.poll_once()
         with m.store.db() as db:
-            row = db.execute("SELECT due,failures FROM schedules WHERE key='check:s:a'").fetchone()
+            row = db.execute("SELECT due,failures FROM schedules WHERE key='check:s:123'").fetchone()
+        assert row['failures'] == -1
+        assert row['due'] == 1600
+        for now in (1015, 1300, 1599):
+            clock[0] = now
+            if active:
+                m.observe_players({'s': {'gameid': '123', 'gameextrainfo': 'Game'}})
+            await m.poll_once()
+            assert len(calls) == 1
+            assert not m.store.due('check:s:123', now)
+        # A readable response clears the protected cooldown and records progress.
+        clock[0] = 1600
+        m.check = original_check
+        if active:
+            m.observe_players({'s': {'gameid': '123', 'gameextrainfo': 'Game'}})
+        await m.poll_once()
+        with m.store.db() as db:
+            row = db.execute("SELECT due,failures FROM schedules WHERE key='check:s:123'").fetchone()
+            progress = db.execute("SELECT complete FROM progress WHERE sid='s' AND app='123'").fetchone()
         assert row['failures'] == 0
-        assert before + 570 < row['due'] < before + 630
+        assert row['due'] == 1600 + (300 if active else 1800)
+        assert progress['complete'] == 0
     asyncio.run(run())
 
 
@@ -117,6 +143,22 @@ def test_private_recent_games_are_suppressed(tmp_path):
         with pytest.raises(AchievementUnavailable):
             await m.discover('s')
     asyncio.run(run())
+
+
+def test_repeated_unreadable_cooldown_survives_restart_and_success_resets(tmp_path):
+    from qq_bot.steam_achievement_store import AchievementStore
+    path = tmp_path / 'cooldown.db'
+    now = 1000
+    for expected in (600, 1200, 2400, 3600, 3600):
+        store = AchievementStore(path)
+        delay = store.retry_unreadable('check:s:123', now)
+        assert delay == expected
+        store.expedite('check:s:123', now)
+        assert not store.due('check:s:123', now + delay - 1)
+        assert store.due('check:s:123', now + delay)
+        now += delay
+    store.schedule('check:s:123', now, 300)
+    assert store.retry_unreadable('check:s:123', now + 300) == 600
 
 
 def test_schema_is_checked_before_player_achievements(tmp_path):
@@ -275,7 +317,7 @@ def test_card_layout_and_missing_fields():
     for title in ['MONSTER HUNTER RISE', '长中文游戏名称' * 15, 'LONG TITLE ' * 25]:
         content = render_card('Player', title, 50, None, None, 1000)
         with Image.open(BytesIO(content)) as image:
-            assert image.size == (1200, 800)
+            assert image.size == (1400, 910)
 
 
 @pytest.mark.parametrize('failure', ['none', 'timeout', 'reject'])

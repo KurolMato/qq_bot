@@ -24,6 +24,8 @@ class Job:
     file_path: Path | None = None
     error: str | None = None
     log_tail: str = ""
+    image_paths: tuple[Path, ...] = ()
+    title: str = ""
 
     def public(self) -> dict[str, object]:
         return {
@@ -36,6 +38,9 @@ class Job:
             "size_bytes": self.file_path.stat().st_size if self.file_path and self.file_path.is_file() else None,
             "error": self.error,
             "download_url": f"/api/jobs/{self.id}/file" if self.file_path else None,
+            "media_type": "images" if self.image_paths else "video",
+            "image_urls": [f"/api/jobs/{self.id}/images/{index}" for index in range(len(self.image_paths))],
+            "title": self.title,
         }
 
 

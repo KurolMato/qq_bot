@@ -4,7 +4,9 @@ import asyncio
 import hashlib
 import logging
 import os
+import tempfile
 import time
+import unicodedata
 from dataclasses import dataclass
 from io import BytesIO
 from pathlib import Path
@@ -31,6 +33,57 @@ class ListCardEntry:
     current_game: str | None
     avatar_url: str | None = None
     game_image_url: str | None = None
+    game_id: str | None = None
+
+
+def _online_game_name_key(value: str) -> str:
+    value = value.translate(str.maketrans("", "", "™®©"))
+    value = unicodedata.normalize("NFKC", value).casefold()
+    value = "".join(char for char in value if char.isalnum())
+    # Explicit aliases cover regional releases whose platform IDs differ.
+    if value in {"影之刃零", "phantombladezero"}:
+        return "影之刃零"
+    return value
+
+
+def sort_online_entries(entries: list[ListCardEntry]) -> list[ListCardEntry]:
+    """Group localized names by platform ID or exact known title aliases.
+
+    Sort games by descending player count, then name for tied counts.
+    Keep the original member order within a game, without modifying entries.
+    IDs are scoped to one platform by the caller.
+    """
+    parents = list(range(len(entries)))
+
+    def root(index: int) -> int:
+        while parents[index] != index:
+            parents[index] = parents[parents[index]]
+            index = parents[index]
+        return index
+
+    seen: dict[tuple[str, str], int] = {}
+    names = [_online_game_name_key(entry.current_game or "") for entry in entries]
+    for index, entry in enumerate(entries):
+        keys = [("name", names[index]), ("id", (entry.game_id or "").strip().casefold())]
+        for kind, value in keys:
+            if not value:
+                continue
+            key = (kind, value)
+            if key in seen:
+                parents[root(index)] = root(seen[key])
+            else:
+                seen[key] = index
+    group_names: dict[int, str] = {}
+    group_counts: dict[int, int] = {}
+    for index, name in enumerate(names):
+        group = root(index)
+        group_names[group] = min(group_names.get(group, name), name)
+        group_counts[group] = group_counts.get(group, 0) + 1
+    return [entries[index] for index in sorted(
+        range(len(entries)), key=lambda index: (
+            -group_counts[root(index)], group_names[root(index)], root(index)
+        )
+    )]
 
 
 PLATFORM_STYLES = {
@@ -111,6 +164,63 @@ async def _load_image(url: str | None, semaphore: asyncio.Semaphore) -> bytes | 
         except Exception as exc:
             logger.info("List card image unavailable: %s (%s)", url, type(exc).__name__)
             return None
+
+
+def _read_cached_avatar(paths: list[Path]) -> bytes | None:
+    for path in paths:
+        try:
+            content = path.read_bytes()
+            if _valid_image(content):
+                return content
+        except OSError:
+            continue
+    return None
+
+
+def _save_cached_avatar(content: bytes, paths: list[Path]) -> None:
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    for path in paths:
+        temporary = None
+        try:
+            with tempfile.NamedTemporaryFile(dir=CACHE_DIR, delete=False) as handle:
+                temporary = Path(handle.name)
+                handle.write(content)
+            temporary.replace(path)
+        finally:
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
+    _prune_cache(paths[-1])
+
+
+async def _load_avatar_with_fallback(url: str | None, cache_key: str) -> bytes | None:
+    """Refresh an avatar, retaining the last good image for this account."""
+    # URL entries also reuse images downloaded earlier by /steam list. The
+    # account entry survives an avatar URL change and is shared across groups.
+    paths = [_cache_path(url)] if url else []
+    paths.append(_cache_path(f"activity-avatar:{cache_key}"))
+    content = None
+    if url:
+        try:
+            # Leave time inside the presence monitor's 15-second card budget
+            # to read cached bytes and render after a stalled CDN download.
+            content = await asyncio.wait_for(_download_image(url), timeout=6)
+            if not content or not await asyncio.to_thread(_valid_image, content):
+                raise ValueError("invalid avatar image")
+        except Exception as exc:
+            logger.warning("Activity avatar download failed: %s (%s)", url, type(exc).__name__)
+            content = None
+    if content is None:
+        content = await asyncio.to_thread(_read_cached_avatar, paths)
+        if content is None:
+            return None
+        # Preserve an existing URL cache under the account key too, so it can
+        # still be used if the next API response points to a different URL.
+        paths = paths[-1:]
+    try:
+        await asyncio.to_thread(_save_cached_avatar, content, paths)
+    except OSError as exc:
+        logger.warning("Activity avatar cache write failed (%s)", type(exc).__name__)
+    return content
 
 
 async def _load_assets(entries: list[ListCardEntry]) -> dict[str, bytes | None]:
@@ -353,7 +463,7 @@ def render_online_overview(
             "#ffffff",
         )
 
-        entries = groups.get(platform, [])
+        entries = sort_online_entries(groups.get(platform, []))
         rows_top = header_top + header_height + 14
         if platform in unhealthy_platforms:
             bottom = rows_top + row_height

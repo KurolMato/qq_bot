@@ -21,6 +21,11 @@ def test_failure_logs_first_error_and_then_throttles() -> None:
     assert backoff.should_log(now=1300) is True
 
 
+def test_long_outage_does_not_overflow() -> None:
+    backoff = FailureBackoff(30, 3600, failures=10000)
+    assert backoff.failure() == 3600
+
+
 def test_component_health_recovers_after_success() -> None:
     mark_failure("test-component", "暂时不可用")
     assert snapshot("test-component").state == "error"

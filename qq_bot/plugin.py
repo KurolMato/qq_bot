@@ -15,6 +15,8 @@ from app.downloader import video_platform
 from .config import BotConfig
 from .links import extract_video_urls
 from .service import CompletedVideo, JobFailed, VideoServiceClient
+from .video_delivery import deliver
+from .video_repair import schedule_repair
 
 
 logger = logging.getLogger(__name__)
@@ -209,15 +211,7 @@ async def handle_video_link(bot: Bot, event: GroupMessageEvent) -> None:
     shared: _SharedVideo | None = None
     try:
         shared, video = await _acquire_shared_video(source_url)
-        await bot.send_group_msg(
-            group_id=event.group_id,
-            message=MessageSegment.video(video.url, cache=False, proxy=False, timeout=120),
-        )
-        logger.info(
-            "Delivered video from %s to group %s",
-            video_platform(source_url),
-            group_id,
-        )
+        await deliver(bot, event.group_id, source_url, video)
     except asyncio.CancelledError:
         await _forget_duplicate(group_id, source_url)
         raise
@@ -231,15 +225,16 @@ async def handle_video_link(bot: Bot, event: GroupMessageEvent) -> None:
                 source_url,
             )
             return
-        logger.exception("Video conversion job failed: %s", exc)
-        # All known extraction/conversion failures remain in the local log only,
-        # including timeouts, oversized files, and X posts without a video.
-    except (httpx.HTTPError, OSError):
+        logger.warning("Video conversion job failed: %s", exc)
+        schedule_repair(bot, group_id, source_url, detail, service)
+    except (httpx.HTTPError, OSError) as exc:
         await _forget_duplicate(group_id, source_url)
         logger.exception("QQ video delivery failed")
-    except Exception:
+        schedule_repair(bot, group_id, source_url, f"{type(exc).__name__}: {exc}", service)
+    except Exception as exc:
         await _forget_duplicate(group_id, source_url)
         logger.exception("Unexpected QQ video processing error")
+        schedule_repair(bot, group_id, source_url, f"{type(exc).__name__}: {exc}", service)
     finally:
         if shared is not None:
             await _release_shared_video(source_url, shared)

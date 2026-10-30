@@ -75,7 +75,7 @@ C:\NapCat.Shell\launcher-win10.bat
 
 ## 四、下载项目
 
-项目仓库：https://github.com/KurolMato/qq_bot
+项目仓库：<https://github.com/KurolMato/qq_bot>
 
 ### 方法 A：下载 ZIP
 
@@ -93,10 +93,10 @@ C:\NapCat.Shell\launcher-win10.bat
 
 
 ```powershell
-git clone https://github.com/OWNER/REPOSITORY.git video-analysis-bot
+git clone https://github.com/KurolMato/qq_bot.git C:\video_analysis
 ```
 
-如使用 GitHub CLI 克隆：gh repo clone OWNER/REPOSITORY video-analysis-bot。
+私有仓库需要先登录 GitHub CLI，再执行 `gh repo clone KurolMato/qq_bot C:\video_analysis`。
 
 ## 五、一键安装基础软件
 
@@ -156,7 +156,7 @@ C:\video_analysis\scripts\windows\setup-laptop.cmd
 
 1. 为当前电脑创建 `.venvs\电脑名称` Python 环境；
 2. 安装 yutto、yt-dlp、Pillow、NoneBot2、PSN 和 Xbox 等依赖；
-3. 创建抖音图文转换专用环境；
+3. 创建抖音图文备用解析专用环境；
 4. 检查 nxapi，并询问是否安装；
 5. 创建 `.env`、`data`、`secrets` 目录；
 6. 限制 `secrets` 目录访问权限；
@@ -293,7 +293,7 @@ Xbox：正常（正常）
 
 尚未配置的游戏平台可能显示“未启用”，不影响视频解析和其他已经配置的平台。
 
-直接单独 @机器人会收到指令说明；管理员提供本地 assets/instruction.png 时发送图片，公开源码不包含这张含第三方美术资源的图片，缺少时会返回常用指令文字。
+直接单独 `@机器人`，应该收到 `assets\instruction.png` 指令说明图片。回复机器人以前发送的卡片不会触发说明图。
 
 测试视频时，在允许群发送一个公开视频链接。机器人不会发送“正在转换”的提示，成功后直接发送 MP4；超时、文件过大或链接本身没有视频时保持静默。
 
@@ -414,7 +414,13 @@ XIAOHONGSHU_COOKIES_FILE=C:\video_analysis\secrets\xiaohongshu-cookies.txt
 
 Cookie 文件必须是 Netscape 格式，不能把浏览器导出的 JSON 直接改名使用。Cookie 属于账号凭据，不能上传 GitHub。
 
-小红书只处理视频笔记，文字或图片笔记不会回复“转换失败”。抖音图文会尝试合成竖版 MP4；此功能通常更依赖有效 Cookie。
+抖音和小红书均支持实况图文：提取动态片段，按作品顺序合并为普通 MP4，混排的普通图片停留 3 秒，保留片段中已有的声音。抖音纯静态图文少于 5 张时直接发图，5 张及以上按原顺序合并为一条聊天记录，每张图片一个节点；小红书纯静态图文直接发送图片，每条消息最多 10 张。图文可能依赖有效 Cookie；抖音兼容详情请求失败时使用专用 f2 环境兜底，小红书保留完整分享参数并尝试桌面/移动页面解析。
+
+小黑盒图文按原顺序发送帖子图片：5 张及以下直接发送，超过 5 张合并为一条聊天记录，每张图片一个节点。视频帖子继续发送视频，纯文字帖子静默忽略。图片任务复用视频 API 的图片访问与延迟清理机制，不需要额外安装依赖。
+
+B 站图文使用同样规则：支持 `bilibili.com/opus/...`、`t.bilibili.com/...` 动态、旧专栏 `read/cv...`，以及跳转到这些页面的 `b23.tv` 分享短链。5 张及以下直接发图，超过 5 张合并为一条聊天记录，每张图一个节点并保留正文顺序。只提取正文图片，不发送头像、推荐缩略图或视频封面。公开视频继续交给 yutto 处理。
+
+小黑盒和 B 站图文会附上作品标题：5 张及以下在同一条消息中先发标题文字、再放图片；超过 5 张时，聊天记录的首个节点为标题文字，后续节点按顺序放图片。标题不计入图片数量；没有标题时只发送图片。
 
 ## 十四、排行榜与游戏日历
 
@@ -422,9 +428,13 @@ Cookie 文件必须是 Netscape 格式，不能把浏览器导出的 JSON 直接
 
 ```text
 /rank          今日排行，04:00 开始统计
+/排、/排名、/排行榜   /rank 的中文简写
+/我的排名、/排名我、/我的排行   等同于 /rank me
 /rank y        昨日结算排行（上一统计日 04:00 至下一日 04:00）
 /绑定 昵称或玩家名   将自己的 QQ 号绑定到本群成员，再次绑定直接替换
-/rank me       已绑定昵称的今日时长（图片）
+/rank me       个人档案图片：今日/本周/本月时长、近期常玩、本月游戏拼图与成就
+/rank me 9     9月月末结算个人档案图片（支持1-12，未结束的月份会提示）
+/rank me d     已绑定昵称的今日时长明细
 /rank me w     已绑定昵称的本周时长（也支持 y、m）
 /rank player w 昵称   指定成员的本周时长（省略 w 查询今日，也支持 y、m）
 /rank w        本周排行，本周一 04:00 开始统计
@@ -448,6 +458,7 @@ Cookie 文件必须是 Netscape 格式，不能把浏览器导出的 JSON 直接
 
 ```text
 /game ol
+/在线、/谁在线、/在线玩家   等同于 /game ol
 ```
 
 把本群 Steam、PS、Switch、Xbox 正在游玩的玩家合成一张图片，不显示离线玩家。
@@ -481,7 +492,7 @@ Cookie 文件必须是 Netscape 格式，不能把浏览器导出的 JSON 直接
 | 打开管理后台 | 打开本地配置、状态和日志页面 |
 | 只重启 QQ Bot | 不影响其他服务地重启机器人 |
 | 首次配置 / 更新 Python 依赖 | 安装或更新当前电脑的依赖 |
-| 从 GitHub 更新项目 | 检查代码后执行 `git pull --ff-only` |
+| 从 GitHub 更新项目 | 从 `KurolMato/qq_bot` 的 `main` 更新，支持 Git 和 ZIP 安装 |
 | 打开日志目录 | 直接打开 `data` 文件夹 |
 
 日志位置：
@@ -497,16 +508,27 @@ Cookie 文件必须是 Netscape 格式，不能把浏览器导出的 JSON 直接
 
 ## 十六、从 GitHub 更新
 
-使用 Git 克隆的项目可以直接更新：
+Git 克隆版和 ZIP 安装版都可以通过管理器更新：
 
 1. 双击 `机器人管理.cmd`；
 2. 选择“完全关闭机器人”；
 3. 返回菜单并选择“从 GitHub 更新项目”；
 4. 更新完成后选择“启动整套机器人”。
 
-管理器会使用 `git pull --ff-only`，不会覆盖已经被忽略的 `.env`、`data`、`secrets`、日志和虚拟环境。如果提示存在本地代码修改，先执行 `git status` 检查，不要使用 `git reset --hard`。
+第 14 项会显示更新源，并明确使用 `https://github.com/KurolMato/qq_bot` 的 `main`，不再依赖本机原先配置的 `origin` 或上游分支。
 
-ZIP 下载的项目不能直接 `git pull`。需要长期更新时，建议重新用 Git 克隆，再把旧项目的 `.env`、`data` 和 `secrets` 复制回来。
+- **Git 克隆版**：检查当前分支和已跟踪文件的修改，从指定仓库抓取后只做快进更新；有未提交修改、本地分叉或不同仓库历史时停止，不强制覆盖。更新程序不自动重启服务。
+- **ZIP 安装版**：无需安装 Git，下载同一仓库的 ZIP，检查路径与文件结构后只替换程序、资源和公开说明。本机 `.env`、`secrets`、`data`、`.venv/.venvs`、`.tools`、人设/profile、昵称表和 Switch 配置保留；已有的自定义 `assets/instruction.png` 也保留。旧代码先备份到 `data/code-update-backups/`，替换失败会回滚；额外的本地文件不会被清空。
+
+已有旧安装如果第 14 项仍然只是执行 `git pull`，先从本仓库下载并同步以下 **3 个文件，保持相对路径**，再打开管理器执行第 14 项：
+
+```text
+scripts/windows/update-project.cmd
+tools/update_project.py
+tools/select_python.cmd
+```
+
+如果旧 Git 安装来自 `video-analysis-bot` 等另一套独立历史，不能直接快进到本仓库。停止机器人并备份整个项目后，将旧 `.git` 文件夹重命名为 `.git-legacy`（保留旧历史），再按 ZIP 安装版执行第 14 项即可更新程序，原有配置与运行数据继续保留。不要使用 `git reset --hard` 或删除数据库来解决仓库地址问题。新安装请直接下载本仓库 ZIP 或按前文克隆 `KurolMato/qq_bot`。
 
 ## 十七、备份和迁移
 
@@ -540,6 +562,14 @@ switch_presence.json（如果存在）
 
 在 `机器人管理.cmd` 中重新选择“首次配置 / 更新 Python 依赖”。它会从 `requirements-bot.txt` 安装完整依赖。
 
+### B 站提示 HttpTransportError 或“媒体大小探测失败”
+
+如果日志已经列出视频和音频流，最后因媒体地址不可用而失败，应先检查网络、代理和 CDN 访问。开头的“未提供登录认证信息”只是提示高清和字幕资源受限，游客仍可下载平台提供的低清视频。
+
+下载器遇到这类连接错误时会禁用代理并直连重试一次，两次尝试共用原来的下载超时。`.env` 中 `BILIBILI_PROXY` 留空时沿用 yutto 配置；设置为 `auto` 时使用自动代理。这两种情况均允许直连重试。设置为 `no` 可强制直连，也可填写明确的 `http://`、`https://` 或 `socks5://` 代理地址；明确指定路线后不会自动切换。修改后重启视频 API 生效。
+
+如需高清或字幕，可在运行视频 API 的同一 Windows 用户和本机 Python 环境下使用 `yutto auth login` 完成登录；无需为了上述连接错误重新登录。两条路线都失败时，最终错误会保留下载器日志，便于继续定位。
+
 ### NapCat 一直显示 ECONNREFUSED 127.0.0.1:8081
 
 说明 QQ Bot 没有在 8081 端口监听。检查 `Video QQ Bot` 窗口和 `data\qq-bot.log`，确认已经完成首次配置，然后在管理器中依次选择“完全关闭机器人”和“启动整套机器人”。
@@ -556,6 +586,12 @@ NapCat 与 QQ 版本不匹配。按照当前 NapCat Release 的说明更换受�
 
 通常是 Nintendo、Sony、Steam、Xbox 或图片 CDN 临时无法访问。文字状态仍然有效。查看 `data\qq-bot.log` 中的图片下载错误，并检查系统代理、防火墙和网络。
 
+Steam 头像原地址失败、超时或返回无效图片时，会自动尝试其他官方头像域名（`avatars.steamstatic.com`、`avatars.akamai.steamstatic.com`、`avatars.fastly.steamstatic.com`），只切换域名，保留同一头像的文件路径。每个域名最多尝试 1.5 秒，三个域名共用最多 4.5 秒的网络等待预算；该逻辑适用于添加账号、开始游戏通知及列表等共用图片下载器的入口，不替换其他平台的图片域名。
+
+Steam 添加账号和开始游戏通知会先尝试下载头像，成功后写入 `data/list_avatar_cache/`；所有域名都下载失败或返回无效图片时，使用已有头像缓存，整个头像刷新保留 6 秒上限。同一账号换了头像链接后，仍可回退到上次成功保存的头像，也可复用列表已有的同链接缓存；缓存沿用列表的容量和清理设置。首次部署且所有域名都不可访问、也没有头像缓存时，仍显示默认头像。更新后在 `机器人管理.cmd` 中选择“只重启 QQ Bot”，无需安装新依赖。
+
+如果浏览器能打开 Steam 头像、机器人却记录 `ConnectError`，在出问题的电脑上双击 `tools/diagnose_steam_avatar.cmd`。它使用本机机器人 Python 环境，对比直连、自动代理和 Windows 系统证书；如配置了 `STEAM_HTTP_PROXY`，还会单独测试该路线。结果为 `PASS` 且标注 `valid image` 才代表图片下载成功。诊断只读取配置并请求图片，不发群消息，不修改数据库、配置或缓存；可在命令行追加 `--url "完整头像链接"` 测试其他头像。
+
 ### 视频链接没有回复
 
 程序对以下明确情况会故意保持静默：
@@ -563,7 +599,7 @@ NapCat 与 QQ 版本不匹配。按照当前 NapCat Release 的说明更换受�
 - 动态本身没有视频；
 - 视频超过群文件上限；
 - 下载或转换超时；
-- 小红书链接是图文笔记；
+- 实况作品未提供可访问的动态素材，或图文图片无法下载；
 - 平台要求登录但未配置 Cookie。
 
 先用公开、较小的视频测试，再查看 `data\video-api.log` 和 `data\qq-bot.log`。
@@ -600,6 +636,16 @@ git diff --cached
 
 确认没有密钥、数据库、Cookie 和日志后再推送。
 
+## PS 奖杯本地同步
+
+QQ Bot 启动后自动为允许群中已登记的 PSN 玩家建立奖杯基准，同账号跨群去重。首次分批扫描已有游戏和全部奖杯（含 DLC），保存铜、银、金、白金数量及各奖杯的游戏、编号、类型、真实解锁日期；每批最多 100 款游戏，每轮最多读取 5 款游戏的明细，每分钟推进，重启继续未完成的进度。
+
+正常每天北京时间 **04:10、16:10** 检查两次：先比较四类奖杯数量，未变化时跳过明细，增加后只同步变化或未完成的游戏。完整核对后更新基准；超时、隐私限制、异常减少和不完整响应保留旧数据，失败退避重试（最长每小时一次）。首次同步和失败恢复会有正常两次之外的请求。程序错过检查时间后，在下次启动或恢复时补查一次，不重复逐次补跑。
+
+记录自动保存在 `data/ps-trophies.db`，可选 `PS_TROPHY_DB_PATH` 支持项目相对路径。`/rank me` 和 `/rank me 月份` 从最近一次完整本地记录统计白金，按实际解锁日期计入对应月份；生成档案不再调用 PSN 奖杯接口。首次基准未完成显示“—”，网络失败继续使用旧记录；新奖杯要等 PSN 上传并完成后台同步后才能显示。此功能不向群自动发送奖杯播报。
+
+在已有个人档案版本基础上，笔记本需同步全部运行变更文件：`qq_bot/ps_trophy_store.py`、`qq_bot/ps_trophies.py`、`qq_bot/personal_rank_psn.py`、`qq_bot/personal_rank_data.py`、`qq_bot/run.py`。不新增依赖或密钥；保留各电脑自己的 `.env`、登录凭据及运行数据库，同步后在 `机器人管理.cmd` 选择“只重启 QQ Bot”。`.env.example` 和本 README、`docs/机器人指令说明书.md` 为配置及说明更新，`tests/test_ps_trophies.py`、`tests/test_personal_rank_psn.py` 为验证文件，不是运行依赖。同步日志可在 `data/qq-bot.log` 中查找 `PS trophy sync`。
+
 ## 通关时长查询（HLTB）
 
 在允许的群中发送 `/hltb 《艾尔登法环》` 或 `/hltb Elden Ring`，机器人引用原消息，返回主线、主线＋支线、全收集的参考小时数与来源链接。没有数据的项目显示“暂无数据”，不会发送查询中的提示。
@@ -629,21 +675,32 @@ git diff --cached
 
 ## Steam 全成就自动播报
 
-现有 `/steam add` 登记的玩家会自动参与，无需新命令或密钥。首次读取只建立成就基准，已完成的老游戏不补发；之后从未完成变为全成就时，向该玩家已登记且在白名单内的群发送“昵称在《游戏名》中获得全成就。”和 1200×800 卡片。
+现有 `/steam add` 登记的玩家会自动参与，无需新命令或密钥。首次读取只建立成就基准，已完成的老游戏不补发；之后从未完成变为全成就时，向该玩家已登记且在白名单内的群发送“昵称在《游戏名》中获得全成就。”和单张 1400×910 JPEG 卡片。
 
-卡片包含 Steam 头像、游戏封面、成就数、累计游玩时长和达成时间。昵称优先使用各群绑定值，游戏名复用官方中文名称。时长来自 Steam 已同步的累计分钟数，缺失显示暂无数据。右上角为本地绘制的 Steam 风格 100% 绶带，并非从 Valve 下载的官方原图。
+卡片包含 Steam 头像、游戏封面、成就数、累计游玩时长、最后解锁成就的名称／描述／图标及其全球玩家完成率，以及首个成就至全成就的日期时间线；没有“最稀有成就”板块。成就图标复用 `/rank me` 的 Steam 全成就渐变边框，右上角使用用户提供的蓝金徽章。昵称优先使用各群绑定值，游戏名复用官方中文名称。累计时长不是全成就耗时，缺失显示暂无数据。解锁时间不完整时不推断最后成就或首个日期；旧记录可继续播报，使用缺省内容。多个成就同刻解锁时展示其中一项并注明数量。
+
+成就定义与解锁时间复用原有查询，优先请求简体中文；全球完成率仅在准备播报时查询，按游戏缓存 24 小时，请求失败退避 5 分钟，不增加日常轮询频率。头像、封面及最后一项成就图标复用有容量限制的 `data/list_avatar_cache/`，不批量下载全部成就图标。元数据缓存使用 `steam-achievements.db` 新增的 `card_metadata` 表，旧库自动兼容，不修改历史发送状态。可选数据失败只记本地日志，不阻止正常播报。
 
 正在玩的游戏每 5 分钟检查；每 30 分钟发现最近两周玩过的游戏并检查。退出游戏或离线同步后可能延迟播报。成就不存在或隐私不可读属于正常跳过，日志只留一行并在 7 天后重试；网络故障采用短暂退避。全成就清单会再次校验，空成就不会触发。DLC 计入同一游戏的成就总数；同一账号同一游戏只播报一次，后续新增成就或重置不重复播报。新登记群不补发历史事件。
 
 `data/steam-achievements.db` 自动生成并保留基准、轮询进度和各群发送状态，不要覆盖或删除。明确发送失败最多尝试 3 次；发送结果不确定会记录 `uncertain` 并停止自动重发。已成功发送的记录重启后不重复。
 
-笔记本运行本功能必须同步全部文件：`qq_bot/steam_achievement_store.py`、`qq_bot/steam_achievement_card.py`、`qq_bot/steam_achievements.py`、`qq_bot/steam_registry.py`、`qq_bot/run.py`、`assets/steam-perfect.png`。无需安装额外依赖，同步后在管理器选择“只重启 QQ Bot”。`tools/preview_steam_achievement.py` 是可选的本地样例生成工具，`assets/steam-perfect-source.txt` 说明图标来源，均不是运行依赖。首次部署时，玩家需允许公开读取成就和游戏详情；隐藏累计时长不会阻止全成就事件。
+本次 UI 更新运行所需的全部变更文件：`qq_bot/steam_achievement_store.py`、`qq_bot/steam_achievement_card.py`、`qq_bot/steam_achievement_ui.py`、`qq_bot/steam_achievements.py`、`assets/steam-perfect-classic.png`。笔记本还需具备现有依赖模块 `qq_bot/personal_rank_card.py`、`qq_bot/list_cards.py` 及原有机器人代码。无需安装额外依赖，同步后在管理器选择“只重启 QQ Bot”。`tools/preview_steam_achievement.py` 是可选的离线样例生成工具，`assets/steam-perfect-classic-source.txt` 说明图标来源，均不是运行依赖。首次部署时，玩家需允许公开读取成就和游戏详情；隐藏累计时长不会阻止全成就事件。
 
-## 二十、进一步说明
+## 二十、DeepSeek / DSH 助手（可选）
+
+在 QQ 私聊里直接问项目问题，本机会拉起 DSH agent 读日志、查代码和联网搜索。只有 `QQ_DSH_USERS` 白名单私聊可以使用配置的工作区写权限；群聊、主动消息和自动诊断使用独立只读实例。额外权限申请不会自动批准。
+
+启用需要安装 dsh CLI（`@deepseek-ai/dsh@0.2.1-rc.3`）、生成本机 `qq` profile，再在 `.env` 中填写自己的 `DEEPSEEK_API_KEY` 与 `QQ_DSH_*`。使用独立的 `%USERPROFILE%\.dsh-qq` 保存配置和会话，重启后可恢复上下文；空闲关闭默认禁用，可用 `QQ_DSH_IDLE_SECONDS` 调整。支持图片、表情和可选浏览器工具，安装、配置及排障见 [DSH私聊助手.md](docs/DSH私聊助手.md)。
+
+无需新增 Python 依赖；启用 DSH 需要 Node.js 和单独安装的 CLI，浏览器功能需另装 Playwright MCP。完整同步清单见上述文档。更新后重启 QQ Bot。API 密钥、人设、对话记录和浏览器登录资料只保存在本机，不随 GitHub 或 Docker 构建上下文发布；配置示例中的密钥和白名单为空。
+
+## 二十一、进一步说明
 
 - [机器人指令说明书.md](docs/机器人指令说明书.md)：完整群聊指令、权限和功能规则；
 - [使用说明.md](docs/使用说明.md)：深入故障排查和技术细节；
 - [笔记本迁移与管理后台.md](docs/笔记本迁移与管理后台.md)：迁移、备份和管理后台说明；
+- [DSH私聊助手.md](docs/DSH私聊助手.md)：DeepSeek 接入、权限、安装、配置和排障；
 - [.env.example](.env.example)：全部配置项及默认值。
 
 如果机器人已经启动但行为不符合预期，优先提供以下三项用于排查：

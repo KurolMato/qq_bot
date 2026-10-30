@@ -20,6 +20,8 @@ class CompletedVideo:
     url: str
     filename: str
     size_bytes: int
+    image_urls: tuple[str, ...] = ()
+    title: str = ""
 
 
 _TRANSIENT_POLL_STATUS_CODES = {408, 425, 429}
@@ -84,6 +86,15 @@ class VideoServiceClient:
                 if job["status"] == "failed":
                     raise JobFailed(job.get("error") or "转换失败")
                 if job["status"] == "completed":
+                    if job.get("media_type") == "images":
+                        paths = job.get("image_urls")
+                        if not isinstance(paths, list) or not paths or not all(isinstance(path, str) and path for path in paths):
+                            raise JobFailed("图文任务没有返回图片")
+                        return CompletedVideo(
+                            job_id=job_id, url="", filename="", size_bytes=0,
+                            image_urls=tuple(urljoin(f"{self.config.public_api_url}/", path.lstrip("/")) for path in paths),
+                            title=job.get("title", "").strip() if isinstance(job.get("title"), str) else "",
+                        )
                     size = int(job.get("size_bytes") or 0)
                     if size > self.config.max_video_bytes:
                         limit_mb = self.config.max_video_bytes // (1024 * 1024)

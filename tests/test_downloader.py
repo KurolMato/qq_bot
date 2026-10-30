@@ -1,13 +1,21 @@
 import subprocess
+import httpx
 from pathlib import Path
 from unittest.mock import Mock, patch
 
 import pytest
 from PIL import Image
 
+
+@pytest.fixture(autouse=True)
+def mock_bilibili_short_link_network(monkeypatch):
+    # Short-link resolution is tested with explicit HTTP mocks in its module.
+    # Existing video downloader tests must not contact b23.tv.
+    monkeypatch.setattr("app.bilibili_images.resolve_share_url", lambda url, timeout: url)
+
 from app.downloader import (
     _douyin_cookie_arguments,
-    _download_douyin_note_to_mp4,
+    _download_douyin_note_images,
     _resolve_douyin_video_media,
     _run_subprocess,
     _x_cookie_arguments,
@@ -100,7 +108,7 @@ def test_resolves_douyin_short_link_to_note(get: Mock) -> None:
     assert resolve_douyin_share_url("https://v.douyin.com/t38tHvayn_Q/").endswith(
         "/note/7677181147129952235"
     )
-    assert get.call_args.kwargs["follow_redirects"] is True
+    assert get.call_args.kwargs["follow_redirects"] is False
 
 
 @pytest.mark.parametrize("url", [
@@ -252,6 +260,95 @@ def test_download_reports_yutto_failure(run: Mock, _: Mock, tmp_path: Path) -> N
     run.return_value = Mock(returncode=2, stdout="", stderr="download failed")
     with pytest.raises(DownloadError, match="download failed"):
         download_to_mp4("https://b23.tv/abc", tmp_path / "job", 30)
+    assert run.call_count == 1
+
+
+@pytest.mark.parametrize("proxy", ["", "auto"])
+@patch("app.downloader.ensure_runtime", return_value=["python", "-m", "yutto"])
+@patch("app.downloader._run_subprocess")
+def test_bilibili_transport_failure_retries_direct_once(
+    run: Mock, _runtime: Mock, proxy: str, tmp_path: Path, monkeypatch,
+) -> None:
+    monkeypatch.setenv("BILIBILI_PROXY", proxy)
+    job_dir = tmp_path / "job"
+    url = "https://b23.tv/abc;whoami"
+
+    def attempt(arguments, **kwargs):
+        if arguments[-3:] == ["--proxy", "no", url]:
+            (job_dir / "video.mp4").write_bytes(b"video")
+            return Mock(returncode=0, stdout="direct ok", stderr="")
+        return Mock(returncode=1, stdout="INFO 未提供登录认证信息", stderr="HttpTransportError")
+
+    run.side_effect = attempt
+    output, logs = download_to_mp4(url, job_dir, 30)
+    assert run.call_count == 2
+    assert output.name == "video.mp4"
+    assert logs == "direct ok"
+    first, second = run.call_args_list
+    assert first.args[0][-1] == url
+    assert second.args[0][-3:] == ["--proxy", "no", url]
+    assert second.kwargs["cwd"] == job_dir
+    assert "shell" not in second.kwargs
+    assert 0 < second.kwargs["timeout"] <= first.kwargs["timeout"] <= 30
+
+
+@pytest.mark.parametrize("failure", [
+    "HttpTransportError", "媒体大小探测失败：3 个地址均不可用", "Cannot connect to host",
+])
+@patch("app.downloader.ensure_runtime", return_value=["python", "-m", "yutto"])
+@patch("app.downloader._run_subprocess")
+def test_bilibili_failed_direct_retry_reports_network_cause(
+    run: Mock, _runtime: Mock, failure: str, tmp_path: Path, monkeypatch,
+) -> None:
+    monkeypatch.delenv("BILIBILI_PROXY", raising=False)
+    run.return_value = Mock(
+        returncode=1, stdout="INFO 未提供登录认证信息", stderr=f"ERROR {failure}",
+    )
+    with pytest.raises(DownloadError, match="^B 站媒体连接失败；自动直连重试也未成功") as exc:
+        download_to_mp4("https://b23.tv/abc", tmp_path / "job", 30)
+    assert run.call_count == 2
+    assert failure in str(exc.value)
+    assert "高清和字幕受限" in str(exc.value)
+
+
+@pytest.mark.parametrize("proxy", ["no", "http://127.0.0.1:7890"])
+@patch("app.downloader.ensure_runtime", return_value=["python", "-m", "yutto"])
+@patch("app.downloader._run_subprocess")
+def test_bilibili_respects_explicit_proxy_without_changing_route(
+    run: Mock, _runtime: Mock, proxy: str, tmp_path: Path, monkeypatch,
+) -> None:
+    monkeypatch.setenv("BILIBILI_PROXY", proxy)
+    run.return_value = Mock(returncode=1, stdout="", stderr="HttpTransportError")
+    with pytest.raises(DownloadError, match="^B 站媒体连接失败"):
+        download_to_mp4("https://b23.tv/abc", tmp_path / "job", 30)
+    assert run.call_count == 1
+    assert run.call_args.args[0][-3:] == ["--proxy", proxy, "https://b23.tv/abc"]
+
+
+@patch("app.downloader.ensure_runtime", return_value=["python", "-m", "yutto"])
+@patch("app.downloader._run_subprocess")
+def test_bilibili_login_failure_does_not_retry_network(
+    run: Mock, _runtime: Mock, tmp_path: Path, monkeypatch,
+) -> None:
+    monkeypatch.delenv("BILIBILI_PROXY", raising=False)
+    run.return_value = Mock(returncode=1, stdout="", stderr="ERROR 登录认证已失效")
+    with pytest.raises(DownloadError, match="登录认证已失效"):
+        download_to_mp4("https://b23.tv/abc", tmp_path / "job", 30)
+    assert run.call_count == 1
+
+
+@patch("app.downloader.time.monotonic", side_effect=[100, 100, 101, 131])
+@patch("app.downloader.ensure_runtime", return_value=["python", "-m", "yutto"])
+@patch("app.downloader._run_subprocess")
+def test_bilibili_retry_does_not_exceed_original_timeout(
+    run: Mock, _runtime: Mock, _clock: Mock, tmp_path: Path, monkeypatch,
+) -> None:
+    monkeypatch.delenv("BILIBILI_PROXY", raising=False)
+    run.return_value = Mock(returncode=1, stdout="", stderr="HttpTransportError")
+    with pytest.raises(DownloadError, match="B 站下载超时"):
+        download_to_mp4("https://b23.tv/abc", tmp_path / "job", 30)
+    assert run.call_count == 1
+    assert run.call_args.kwargs["timeout"] == 29
 
 
 @patch.dict("os.environ", {}, clear=True)
@@ -305,9 +402,10 @@ def test_x_download_falls_back_to_syndication(run: Mock, _: Mock, tmp_path: Path
 
 
 @patch.dict("os.environ", {}, clear=True)
+@patch("app.downloader.resolve_douyin_share_url", side_effect=lambda url, timeout: url)
 @patch("app.downloader.ensure_runtime", return_value=["python", "-m", "yt_dlp"])
 @patch("app.downloader._run_subprocess")
-def test_download_invokes_ytdlp_for_douyin(run: Mock, _: Mock, tmp_path: Path) -> None:
+def test_download_invokes_ytdlp_for_douyin(run: Mock, _: Mock, _share: Mock, tmp_path: Path) -> None:
     job_dir = tmp_path / "douyin-job"
 
     def create_output(*args: object, **kwargs: object) -> Mock:
@@ -359,15 +457,62 @@ def test_douyin_detail_rejects_wrong_item_and_untrusted_media(
         _resolve_douyin_video_media("https://www.douyin.com/video/12345", tmp_path, 30)
 
 
-@patch("app.downloader._douyin_cookie_arguments", return_value=[])
-@patch("app.downloader._resolve_douyin_video_media", return_value="https://v1.douyinvod.com/a.mp4")
+@pytest.mark.parametrize("status, expected", [
+    (401, "重新导出抖音 Cookie"),
+    (403, "重新导出抖音 Cookie"),
+    (429, "HTTP 429"),
+    (503, "HTTP 503"),
+])
+@patch("app.downloader._find_douyin_cookie_file", return_value=None)
+@patch("app.downloader.httpx.get")
+def test_douyin_detail_reports_http_failure_without_credentials(
+    get: Mock, _cookie: Mock, status: int, expected: str, tmp_path: Path,
+) -> None:
+    request = httpx.Request("GET", "https://www.douyin.com/detail/?token=secret")
+    get.return_value = httpx.Response(status, request=request)
+    with pytest.raises(DownloadError, match=expected) as exc:
+        _resolve_douyin_video_media("https://www.douyin.com/video/12345", tmp_path, 30)
+    assert "secret" not in str(exc.value)
+
+
+@pytest.mark.parametrize("error, expected", [
+    (httpx.ConnectError("secret"), "无法连接"),
+    (httpx.ReadTimeout("secret"), "请求超时"),
+])
+@patch("app.downloader._find_douyin_cookie_file", return_value=None)
+@patch("app.downloader.httpx.get")
+def test_douyin_detail_reports_network_failure(
+    get: Mock, _cookie: Mock, error: Exception, expected: str, tmp_path: Path,
+) -> None:
+    get.side_effect = error
+    with pytest.raises(DownloadError, match=expected) as exc:
+        _resolve_douyin_video_media("https://www.douyin.com/video/12345", tmp_path, 30)
+    assert "secret" not in str(exc.value)
+
+
+@patch("app.downloader._find_douyin_cookie_file", return_value=None)
+@patch("app.downloader.httpx.get")
+def test_douyin_detail_reports_empty_response(get: Mock, _cookie: Mock, tmp_path: Path) -> None:
+    get.return_value = httpx.Response(
+        200, content=b"", request=httpx.Request("GET", "https://www.douyin.com/detail/"),
+    )
+    with pytest.raises(DownloadError, match="空白或非 JSON"):
+        _resolve_douyin_video_media("https://www.douyin.com/video/12345", tmp_path, 30)
+
+
+@pytest.mark.parametrize("cookie_arguments", [
+    [], ["--cookies", "cookies.txt"], ["--cookies-from-browser", "edge"],
+])
+@patch("app.downloader._douyin_cookie_arguments")
+@patch("app.downloader._resolve_douyin_video_media_candidates", return_value=["https://v1.douyinvod.com/a.mp4"])
 @patch("app.downloader.ensure_runtime", return_value=["python", "-m", "yt_dlp"])
 @patch("app.downloader._run_subprocess")
 @pytest.mark.parametrize("fallback_ok", [True, False])
 def test_douyin_403_retries_media_once(
     run: Mock, _runtime: Mock, resolve: Mock, _cookies: Mock,
-    fallback_ok: bool, tmp_path: Path,
+    fallback_ok: bool, cookie_arguments: list[str], tmp_path: Path,
 ) -> None:
+    _cookies.return_value = cookie_arguments
     job_dir = tmp_path / "job"
     def attempt(arguments, **kwargs):
         if arguments[-1] == "https://v1.douyinvod.com/a.mp4" and fallback_ok:
@@ -383,34 +528,41 @@ def test_douyin_403_retries_media_once(
             download_to_mp4("https://www.douyin.com/video/12345", job_dir, 30)
     assert run.call_count == 2
     resolve.assert_called_once()
+    media_arguments = run.call_args.args[0]
+    assert "--cookies" not in media_arguments
+    assert "--cookies-from-browser" not in media_arguments
+    assert "--ignore-config" in media_arguments
 
 
-@patch("app.downloader._download_douyin_note_to_mp4")
+@patch("app.downloader._download_douyin_note_images")
 @patch("app.downloader.ensure_runtime", return_value=["python", "-m", "yt_dlp"])
-def test_douyin_note_uses_image_post_converter(
+def test_douyin_note_uses_image_downloader(
     _runtime: Mock, convert: Mock, tmp_path: Path
 ) -> None:
     job_dir = tmp_path / "douyin-note-job"
-    expected = job_dir / "7677181147129952235.mp4"
+    expected = [job_dir / "image-000.jpg"]
     convert.return_value = (expected, "ok")
     url = "https://www.douyin.com/note/7677181147129952235"
 
     output, logs = download_to_mp4(url, job_dir, 30)
 
     convert.assert_called_once_with(url, job_dir, 30)
+    _runtime.assert_not_called()
     assert output == expected
     assert logs == "ok"
 
 
+@patch("app.downloader._resolve_douyin_detail", side_effect=DownloadError("direct unavailable"))
 @patch("app.downloader._douyin_cookie_file", return_value=Path("cookies.txt"))
 @patch("app.downloader._douyin_f2_python", return_value=Path("f2-python.exe"))
 @patch("app.downloader._download_douyin_asset")
 @patch("app.downloader._run_subprocess")
-def test_douyin_note_builds_mp4_from_downloaded_images(
+def test_douyin_note_fallback_downloads_images_without_ffmpeg(
     run: Mock,
     download_asset: Mock,
     _f2_python: Mock,
     _cookie_file: Mock,
+    _detail: Mock,
     tmp_path: Path,
 ) -> None:
     job_dir = tmp_path / "note"
@@ -438,21 +590,20 @@ def test_douyin_note_builds_mp4_from_downloaded_images(
     run.side_effect = fake_process
     download_asset.side_effect = fake_asset
 
-    output, _logs = _download_douyin_note_to_mp4(
+    images, _logs = _download_douyin_note_images(
         "https://www.douyin.com/note/7677181147129952235", job_dir, 30
     )
 
-    assert output.name == "7677181147129952235.mp4"
+    assert [path.name for path in images] == ["image-000.jpg", "image-001.jpg"]
     assert not (job_dir / "douyin-cookies.txt").exists()
-    assert (job_dir / "slide-000.jpg").is_file()
-    assert Image.open(job_dir / "slide-000.jpg").size == (720, 1280)
-    ffmpeg_arguments = run.call_args_list[-1].args[0]
-    assert ffmpeg_arguments[0] == "ffmpeg"
-    assert "libx264" in ffmpeg_arguments
+    assert Image.open(images[0]).size == (320, 180)
+    assert run.call_count == 1
+    assert run.call_args.args[0][0] == "f2-python.exe"
+    assert not list(job_dir.glob("*.mp4"))
 
 
 @patch.dict("os.environ", {}, clear=True)
-@patch("app.downloader._download_douyin_note_to_mp4")
+@patch("app.downloader._download_douyin_note_images")
 @patch(
     "app.downloader.resolve_douyin_share_url",
     return_value="https://v.douyin.com/t38tHvayn_Q/",
@@ -467,7 +618,7 @@ def test_failed_ytdlp_can_fall_back_when_log_reveals_note_url(
         stdout="",
         stderr="Unsupported URL: https://www.douyin.com/note/7677181147129952235",
     )
-    expected = tmp_path / "job" / "note.mp4"
+    expected = [tmp_path / "job" / "image-000.jpg"]
     convert.return_value = (expected, "converted")
 
     output, logs = download_to_mp4(
@@ -482,9 +633,10 @@ def test_failed_ytdlp_can_fall_back_when_log_reveals_note_url(
 
 
 @patch.dict("os.environ", {"DOUYIN_COOKIES_FROM_BROWSER": "edge"}, clear=True)
+@patch("app.downloader.resolve_douyin_share_url", side_effect=lambda url, timeout: url)
 @patch("app.downloader.ensure_runtime", return_value=["python", "-m", "yt_dlp"])
 @patch("app.downloader._run_subprocess")
-def test_douyin_can_use_explicit_browser_cookies(run: Mock, _: Mock, tmp_path: Path) -> None:
+def test_douyin_can_use_explicit_browser_cookies(run: Mock, _: Mock, _share: Mock, tmp_path: Path) -> None:
     job_dir = tmp_path / "douyin-cookie-job"
 
     def create_output(*args: object, **kwargs: object) -> Mock:
@@ -657,8 +809,9 @@ def test_download_invokes_ytdlp_for_xiaohongshu(
 @patch.dict("os.environ", {}, clear=True)
 @patch("app.downloader.ensure_runtime", return_value=["python", "-m", "yt_dlp"])
 @patch("app.downloader._run_subprocess")
+@patch("app.downloader._download_xiaohongshu_album", side_effect=NoVideoError("该小红书笔记中没有视频或图片"))
 def test_xiaohongshu_image_note_is_not_a_conversion_failure(
-    run: Mock, _runtime: Mock, tmp_path: Path
+    _album: Mock, run: Mock, _runtime: Mock, tmp_path: Path
 ) -> None:
     run.return_value = Mock(
         returncode=1,

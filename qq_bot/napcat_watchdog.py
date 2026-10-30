@@ -213,9 +213,14 @@ def restart_bot(
     *,
     reason: str = "watchdog",
     expected_heartbeat_pid: int | None = None,
+    expected_process_id: int | None = None,
 ) -> bool:
     output = _netstat()
     process_id = listener_pid(output, 8081)
+    if expected_process_id is not None and process_id != expected_process_id:
+        logger.warning("QQ Bot changed before requested restart (expected PID %s, current %s); skipping",
+                       expected_process_id, process_id)
+        return False
     if process_id is not None:
         if expected_heartbeat_pid is None:
             _, _, expected_heartbeat_pid = heartbeat_state(max_age=float("inf"))

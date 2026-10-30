@@ -1,4 +1,6 @@
 import asyncio
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import nonebot
 from nonebot.adapters.onebot.v11 import GroupMessageEvent
@@ -69,3 +71,13 @@ def test_mention_with_plain_text_does_not_open_help() -> None:
     _check_at_me(FakeBot(), event)  # type: ignore[arg-type]
 
     assert asyncio.run(_is_direct_mention_without_command(FakeBot(), event)) is False  # type: ignore[arg-type]
+
+
+def test_public_installation_without_optional_poster_returns_text(monkeypatch, tmp_path):
+    from qq_bot import help_message as help_module
+    monkeypatch.setattr(help_module, "HELP_IMAGE", tmp_path / "missing.png")
+    monkeypatch.setattr(help_module, "config", SimpleNamespace(allowed_groups=frozenset()))
+    bot = SimpleNamespace(send=AsyncMock())
+    incoming = _event(" ")
+    asyncio.run(help_module.send_help(bot, incoming))
+    bot.send.assert_awaited_once_with(incoming, help_module.HELP_TEXT)

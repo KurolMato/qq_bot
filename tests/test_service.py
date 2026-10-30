@@ -178,3 +178,26 @@ def test_poll_preserves_external_cancellation() -> None:
         assert client.cancelled
 
     asyncio.run(run())
+
+
+@pytest.mark.parametrize("paths", [["/api/jobs/job-1/images/0", "/api/jobs/job-1/images/1"], [], None])
+@pytest.mark.parametrize("title", [None, " 图文标题 "])
+def test_completed_image_post_returns_ordered_images(paths, title) -> None:
+    job = {"status": "completed", "media_type": "images", "image_urls": paths}
+    if title is not None:
+        job["title"] = title
+    client = _Client([_Response(job)])
+    service = VideoServiceClient(_config())
+
+    async def run():
+        with patch("qq_bot.service.httpx.AsyncClient", return_value=client), patch("qq_bot.service.asyncio.sleep", new=AsyncMock()):
+            return await service.convert("https://www.douyin.com/note/12345")
+
+    if paths:
+        result = asyncio.run(run())
+        assert result.image_urls == tuple("http://127.0.0.1:8000" + path for path in paths)
+        assert result.url == ""
+        assert result.title == (title.strip() if title else "")
+    else:
+        with pytest.raises(JobFailed, match="没有返回图片"):
+            asyncio.run(run())

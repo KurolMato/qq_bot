@@ -30,6 +30,8 @@ class AchievementStore:
                   app TEXT PRIMARY KEY, names TEXT, updated REAL);
                 CREATE TABLE IF NOT EXISTS targets (
                   sid TEXT, app TEXT, title TEXT, expires REAL, PRIMARY KEY(sid,app));
+                CREATE TABLE IF NOT EXISTS card_metadata (
+                  app TEXT, kind TEXT, payload TEXT, expires REAL, PRIMARY KEY(app,kind));
                 ''')
                 yield db
         finally:
@@ -52,7 +54,7 @@ class AchievementStore:
     def expedite(self, key, now):
         with self.db() as db:
             # Switching a recent game into active play must not retain its
-            # 30-minute schedule. Preserve network-failure backoff, however.
+            # 30-minute schedule. Preserve failure backoff and protected cooldowns.
             db.execute('UPDATE schedules SET due=MIN(due,?) WHERE key=? AND failures=0', (now + 300, key))
 
     def schedule(self, key, now, interval, failed=False):
@@ -63,9 +65,19 @@ class AchievementStore:
             db.execute('INSERT OR REPLACE INTO schedules VALUES (?,?,?)', (key, now + delay, failures))
 
     def suppress(self, key, now, interval=7 * 86400):
-        """Retry unreadable or unsupported achievement data infrequently."""
+        """Pause unreadable data for an interval active play cannot shorten."""
         with self.db() as db:
             db.execute('INSERT OR REPLACE INTO schedules VALUES (?,?,?)', (key, now + interval, -1))
+
+    def retry_unreadable(self, key, now):
+        """Persist a protected 10/20/40/60-minute cooldown until data recovers."""
+        with self.db() as db:
+            row = db.execute('SELECT failures FROM schedules WHERE key=?', (key,)).fetchone()
+            # Negative counts already mark protected cooldowns in old databases.
+            failures = min(-row['failures'] + 1, 4) if row and row['failures'] < 0 else 1
+            delay = min(600 * 2 ** (failures - 1), 3600)
+            db.execute('INSERT OR REPLACE INTO schedules VALUES (?,?,?)', (key, now + delay, -failures))
+            return delay
 
     def schema(self, app, now):
         with self.db() as db:
@@ -75,6 +87,17 @@ class AchievementStore:
     def save_schema(self, app, names, now):
         with self.db() as db:
             db.execute('INSERT OR REPLACE INTO schemas VALUES (?,?,?)', (app, json.dumps(sorted(names)), now))
+
+    def card_metadata(self, app, kind, now):
+        with self.db() as db:
+            row = db.execute('SELECT payload,expires FROM card_metadata WHERE app=? AND kind=?',
+                             (app, kind)).fetchone()
+            return json.loads(row['payload']) if row and row['expires'] > now else None
+
+    def save_card_metadata(self, app, kind, payload, expires):
+        with self.db() as db:
+            db.execute('INSERT OR REPLACE INTO card_metadata VALUES (?,?,?,?)',
+                       (app, kind, json.dumps(payload, ensure_ascii=False), expires))
 
     def observe(self, sid, app, complete, payload, groups, now):
         with self.db() as db:

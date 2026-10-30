@@ -360,7 +360,7 @@ def _best_ps_image(values: Iterable[Mapping[str, Any]]) -> str | None:
     return media[0][1] if media else None
 
 
-def _parse_ps_store_page(content: str, source_url: str) -> CalendarGame:
+def _parse_ps_store_page(content: str, source_url: str, *, prefer_landscape: bool = False) -> CalendarGame:
     url_match = PS_STORE_URL_RE.search(source_url)
     if url_match is None:
         raise GameLookupError("PlayStation Store 链接格式不正确。")
@@ -413,6 +413,14 @@ def _parse_ps_store_page(content: str, source_url: str) -> CalendarGame:
 
     media_objects = [item for item in objects if "url" in item]
     image_url = _best_ps_image(media_objects)
+    if prefer_landscape:
+        for role in ("SIXTEEN_BY_NINE_BANNER", "GAMEHUB_COVER_ART", "FOUR_BY_THREE_BANNER"):
+            match = next((item.get("url") for item in media_objects
+                          if str(item.get("role") or item.get("type") or "").upper() == role
+                          and str(item.get("url", "")).startswith("https://")), None)
+            if match:
+                image_url = match
+                break
     stable_id = _value_id((concept or product).get("id"))
     return CalendarGame(f"psn:{stable_id}", name, release, image_url, "PS")
 
@@ -475,7 +483,7 @@ class PlayStationStoreMatcher:
             raise GameLookupError("PlayStation Store 没有找到这个游戏，请输入更完整的官方名称。")
         return url
 
-    async def lookup(self, query: str) -> CalendarGame:
+    async def lookup(self, query: str, *, prefer_landscape: bool = False) -> CalendarGame:
         direct = PS_STORE_URL_RE.search(query.strip())
         if direct:
             url = f"{PS_STORE_ROOT}/{direct.group('kind').casefold()}/{direct.group('id')}"
@@ -489,7 +497,7 @@ class PlayStationStoreMatcher:
                     raise GameLookupError("PlayStation Store 暂时无法搜索，请稍后再试。") from exc
         try:
             content = await self._fetch_text(url)
-            return _parse_ps_store_page(content, url)
+            return _parse_ps_store_page(content, url, prefer_landscape=prefer_landscape)
         except GameLookupError:
             raise
         except Exception as exc:
