@@ -52,6 +52,7 @@ def update_git(root: Path) -> None:
         raise UpdateError(f"当前不在 {BRANCH} 分支，已取消更新；请先检查并切回该分支。")
     # Use the explicit trusted source, never whichever remote/upstream happens to be configured.
     run_git(root, "fetch", "--no-tags", REPOSITORY_URL, f"refs/heads/{BRANCH}")
+    preserve_untracked_poster(root)
     try:
         run_git(root, "merge", "--ff-only", "FETCH_HEAD")
     except UpdateError as exc:
@@ -59,6 +60,27 @@ def update_git(root: Path) -> None:
             "无法快进到官方 main（可能有本地提交，或旧仓库历史不同），未强制覆盖代码。"
             "请保留配置和数据后按 README 的仓库迁移步骤处理。\n" + str(exc)
         ) from exc
+
+
+def preserve_untracked_poster(root: Path) -> None:
+    """Keep a legacy custom poster when the public default becomes tracked."""
+    relative = Path("assets/instruction.png")
+    poster = safe_destination(root, relative)
+    if not poster.is_file() or run_git(root, "ls-files", "--", relative.as_posix()):
+        return
+    entry = run_git(root, "ls-tree", "FETCH_HEAD", "--", relative.as_posix()).split()
+    if len(entry) < 3 or entry[1] != "blob":
+        return
+    if run_git(root, "hash-object", "--", str(poster)) == entry[2]:
+        return
+    override = safe_destination(root, Path("assets/instruction.local.png"))
+    if override.exists():
+        override = safe_destination(root, Path("data/code-update-backups") / (
+            datetime.now().strftime("%Y%m%d-%H%M%S-") + uuid.uuid4().hex[:8]
+        ) / relative)
+    override.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(poster, override)
+    print(f"已保留原本机指令图：{override}")
 
 
 def download_archive() -> bytes:
@@ -71,6 +93,8 @@ def download_archive() -> bytes:
 
 
 def managed_file(path: PurePosixPath) -> bool:
+    if path.as_posix() == "assets/instruction.local.png":
+        return False
     if len(path.parts) == 1:
         return path.name in ROOT_FILES
     if path.parts[0] not in CODE_DIRS:

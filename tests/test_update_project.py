@@ -47,6 +47,7 @@ def test_zip_update_preserves_private_state_and_custom_poster_with_code_backup(t
         "昵称绑定.txt": b"private nicknames",
         "switch_presence.json": b"private settings",
         "assets/instruction.png": b"custom poster",
+        "assets/instruction.local.png": b"private custom poster",
         "qq_bot/cordis.patch.yml": b"private local profile",
     }
     for name, content in private.items():
@@ -64,6 +65,14 @@ def test_zip_update_preserves_private_state_and_custom_poster_with_code_backup(t
     assert all((root / name).read_bytes() == content for name, content in private.items())
     assert not (root / ".git").exists()
     assert updater.install_archive(root, archive({"README.md": b"new documentation"})) == (0, None)
+
+
+def test_zip_installation_receives_bundled_default_poster(tmp_path):
+    root = installation(tmp_path)
+    image = Path(__file__).resolve().parents[1] / "assets/instruction.png"
+    updater.install_archive(root, archive({"assets/instruction.png": image.read_bytes()}))
+    assert (root / "assets/instruction.png").read_bytes() == image.read_bytes()
+    assert not (root / "assets/instruction.local.png").exists()
 
 
 @pytest.mark.parametrize("path", ["../../escape.py", "/absolute.py", "tools\\..\\escape.py", "tools/C:escape.py"])
@@ -199,7 +208,9 @@ def test_real_git_fast_forward_ignores_wrong_origin_and_preserves_ignored_state(
     git(source, "config", "user.name", "Updater test")
     git(source, "config", "user.email", "test@example.invalid")
     (source / "README.md").write_text("first")
-    (source / ".gitignore").write_text(".env\ndata/\nsecrets/\n")
+    (source / ".gitignore").write_text(
+        ".env\ndata/\nsecrets/\nassets/instruction.png\nassets/instruction.local.png\n"
+    )
     git(source, "add", ".")
     git(source, "commit", "-m", "initial")
     target = tmp_path / "target"
@@ -208,7 +219,12 @@ def test_real_git_fast_forward_ignores_wrong_origin_and_preserves_ignored_state(
     (target / ".env").write_text("private credentials")
     (target / "data").mkdir()
     (target / "data/state.db").write_bytes(b"private database")
+    (target / "assets").mkdir()
+    (target / "assets/instruction.png").write_bytes(b"old custom poster")
     (source / "README.md").write_text("second")
+    (source / "assets").mkdir()
+    (source / "assets/instruction.png").write_bytes(b"bundled default poster")
+    (source / ".gitignore").write_text(".env\ndata/\nsecrets/\nassets/instruction.local.png\n")
     git(source, "add", ".")
     git(source, "commit", "-m", "update")
     monkeypatch.setattr(updater, "REPOSITORY_URL", str(source))
@@ -217,6 +233,8 @@ def test_real_git_fast_forward_ignores_wrong_origin_and_preserves_ignored_state(
     assert (target / "README.md").read_text() == "second"
     assert (target / ".env").read_text() == "private credentials"
     assert (target / "data/state.db").read_bytes() == b"private database"
+    assert (target / "assets/instruction.png").read_bytes() == b"bundled default poster"
+    assert (target / "assets/instruction.local.png").read_bytes() == b"old custom poster"
     # A later local commit must never be reset or merged over to force an update.
     git(target, "config", "user.name", "Updater test")
     git(target, "config", "user.email", "test@example.invalid")

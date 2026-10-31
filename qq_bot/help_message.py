@@ -14,6 +14,7 @@ from .config import BotConfig
 config = BotConfig.from_env()
 logger = logging.getLogger(__name__)
 HELP_IMAGE = Path(__file__).resolve().parent.parent / "assets" / "instruction.png"
+LOCAL_HELP_IMAGE = HELP_IMAGE.with_name("instruction.local.png")
 HELP_TEXT = (
     "常用指令：/bot status、/game list、/rank、/hltb 游戏名、"
     "/switch list、/psn list、/steam list、/xbox list。"
@@ -46,11 +47,12 @@ help_matcher = on_message(
 async def send_help(bot: Bot, event: GroupMessageEvent) -> None:
     if config.allowed_groups and str(event.group_id) not in config.allowed_groups:
         return
-    if not HELP_IMAGE.is_file():
+    image_path = LOCAL_HELP_IMAGE if LOCAL_HELP_IMAGE.is_file() else HELP_IMAGE
+    if not image_path.is_file():
         await bot.send(event, HELP_TEXT)
         return
     try:
-        content = await asyncio.to_thread(HELP_IMAGE.read_bytes)
+        content = await asyncio.to_thread(image_path.read_bytes)
         await bot.send(
             event,
             MessageSegment.image(content, cache=False, proxy=False, timeout=30),

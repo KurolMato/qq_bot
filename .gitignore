@@ -70,7 +70,7 @@ assets/previews/
 
 # Keep the public repository's existing release exclusions.
 /AGENTS.md
-/assets/instruction.png
+/assets/instruction.local.png
 /tools/render_game_time_leaderboard_preview.py
 /.git-legacy*/
 *.db
