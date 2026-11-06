@@ -295,7 +295,7 @@ Xbox：正常（正常）
 
 直接单独 `@机器人`，应该收到 `assets\instruction.png` 指令说明图片。回复机器人以前发送的卡片不会触发说明图。
 
-默认指令图随仓库和 ZIP 一起提供。需要自定义时，将图片放到 `assets/instruction.local.png`，机器人优先发送本机自定义图；该文件不进 Git，也不会被 ZIP 更新覆盖。两张图都缺失时才回退为文字指令。新版更新器会保留旧安装中与公开默认图不同的未跟踪指令图；如果首次升级仍在使用旧更新器或直接执行 `git pull`，已有自定义图请先另存为 `instruction.local.png`。
+默认指令图随仓库和 ZIP 一起提供。需要自定义时，将图片放到 `assets/instruction.local.png`，机器人优先发送本机自定义图；该文件不进 Git，也不会被第 14 项覆盖。两张图都缺失时才回退为文字指令。第 14 项会覆盖默认的 `instruction.png`，已有自定义图应另存为 `instruction.local.png`。
 
 测试视频时，在允许群发送一个公开视频链接。机器人不会发送“正在转换”的提示，成功后直接发送 MP4；超时、文件过大或链接本身没有视频时保持静默。
 
@@ -494,7 +494,7 @@ B 站图文使用同样规则：支持 `bilibili.com/opus/...`、`t.bilibili.com
 | 打开管理后台 | 打开本地配置、状态和日志页面 |
 | 只重启 QQ Bot | 不影响其他服务地重启机器人 |
 | 首次配置 / 更新 Python 依赖 | 安装或更新当前电脑的依赖 |
-| 从 GitHub 更新项目 | 从 `KurolMato/qq_bot` 的 `main` 更新，支持 Git 和 ZIP 安装 |
+| 从 GitHub 强制覆盖程序 | 以 `KurolMato/qq_bot` 的 `main` 覆盖本机程序，支持 Git 和 ZIP 安装 |
 | 打开日志目录 | 直接打开 `data` 文件夹 |
 
 日志位置：
@@ -514,15 +514,17 @@ Git 克隆版和 ZIP 安装版都可以通过管理器更新：
 
 1. 双击 `机器人管理.cmd`；
 2. 选择“完全关闭机器人”；
-3. 返回菜单并选择“从 GitHub 更新项目”；
+3. 返回菜单并选择第 14 项“从 GitHub 强制覆盖程序”；
 4. 更新完成后选择“启动整套机器人”。
 
-第 14 项会显示更新源，并明确使用 `https://github.com/KurolMato/qq_bot` 的 `main`，不再依赖本机原先配置的 `origin` 或上游分支。
+第 14 项会显示更新源，并强制使用 `https://github.com/KurolMato/qq_bot` 的 `main` 覆盖本机程序，不依赖本机原先配置的 `origin` 或上游分支。本机未提交的程序修改、暂存修改和本地提交均不会阻止更新。
 
-- **Git 克隆版**：检查当前分支和已跟踪文件的修改，从指定仓库抓取后只做快进更新；有未提交修改、本地分叉或不同仓库历史时停止，不强制覆盖。更新程序不自动重启服务。
-- **ZIP 安装版**：无需安装 Git，下载同一仓库的 ZIP，检查路径与文件结构后只替换程序、资源和公开说明。本机 `.env`、`secrets`、`data`、`.venv/.venvs`、`.tools`、人设/profile、昵称表和 Switch 配置保留；已有的自定义 `assets/instruction.png` 也保留。旧代码先备份到 `data/code-update-backups/`，替换失败会回滚；额外的本地文件不会被清空。
+- **Git 克隆版**：先抓取指定版本，再备份本机代码、暂存区补丁及旧提交。按远程快照覆盖程序和默认资源，移除 Git 已跟踪、远程已删除的旧程序文件，并将当前检出分支的版本同步到远程 `main`（分支名不变，也支持本地分叉、独立旧历史和分离 HEAD）。不使用会清理整个工作目录的更新方式。
+- **ZIP 安装版**：无需安装 Git，下载同一仓库的 ZIP，检查路径与文件结构后强制覆盖程序、默认资源和公开说明。
 
-已有旧安装如果第 14 项仍然只是执行 `git pull`，先从本仓库下载并同步以下 **3 个文件，保持相对路径**，再打开管理器执行第 14 项：
+两种安装方式都保留本机 `.env`、`secrets`、`data`、`.venv/.venvs`、`.tools`、人设/profile、昵称表、Switch 配置和 `assets/instruction.local.png`。额外的未跟踪本地文件不清空。旧代码备份位于 `data/code-update-backups/`，替换或 Git 同步失败时自动回滚。Git 备份目录还包含 `git-state.json`、程序暂存和工作区补丁（不复制密钥或数据库内容），旧提交保存在 `codex/update-backup-*` 本地备份分支；这些备份不会上传 GitHub。更新不自动安装依赖或重启服务。
+
+已有旧安装如果第 14 项仍执行 `git pull` 或因“未提交修改 / 不能快进”中止，先从本仓库下载并同步以下 **3 个文件，保持相对路径**，再打开管理器执行第 14 项：
 
 ```text
 scripts/windows/update-project.cmd
@@ -530,7 +532,7 @@ tools/update_project.py
 tools/select_python.cmd
 ```
 
-如果旧 Git 安装来自 `video-analysis-bot` 等另一套独立历史，不能直接快进到本仓库。停止机器人并备份整个项目后，将旧 `.git` 文件夹重命名为 `.git-legacy`（保留旧历史），再按 ZIP 安装版执行第 14 项即可更新程序，原有配置与运行数据继续保留。不要使用 `git reset --hard` 或删除数据库来解决仓库地址问题。新安装请直接下载本仓库 ZIP 或按前文克隆 `KurolMato/qq_bot`。
+来自 `video-analysis-bot` 等旧仓库的安装也可使用新版第 14 项强制同步，不必删除或重命名 `.git`，原有提交会自动备份。不要删除数据库或手工清空目录来解决仓库地址问题。新安装请直接下载本仓库 ZIP 或按前文克隆 `KurolMato/qq_bot`。
 
 ## 十七、备份和迁移
 

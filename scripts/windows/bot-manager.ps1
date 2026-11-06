@@ -34,7 +34,7 @@ while ($true) {
     Write-Host ' 11. 登录 Xbox 观察账号'
     Write-Host ' 12. 导出昵称表'
     Write-Host ' 13. 导入昵称表'
-    Write-Host ' 14. 从 GitHub 更新项目（KurolMato/qq_bot）'
+    Write-Host ' 14. 从 GitHub 强制覆盖程序（qq_bot）'
     Write-Host ' 15. 打开日志目录'
     Write-Host '  0. 退出'
     Write-Host '============================================================'
