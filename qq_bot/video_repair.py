@@ -10,17 +10,19 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import time
 from datetime import datetime
 
 from nonebot.adapters.onebot.v11 import Bot
 
 from .service import CompletedVideo, JobFailed, VideoServiceClient
-from .video_delivery import deliver
+from .video_delivery import DeliveryUncertain, deliver
 
 logger = logging.getLogger(__name__)
 
 _pending: set[str] = set()
 _tasks: set[asyncio.Task] = set()
+_delivered: dict[str, float] = {}
 
 
 def _env_flag(name: str, default: str = "true") -> bool:
@@ -48,6 +50,15 @@ def repair_key(group_id: str, source_url: str) -> str:
     return f"{group_id}|{source_url}"
 
 
+def is_repair_pending(group_id: str, source_url: str) -> bool:
+    now = time.monotonic()
+    for key, until in list(_delivered.items()):
+        if until <= now:
+            _delivered.pop(key, None)
+    key = repair_key(group_id, source_url)
+    return key in _pending or key in _delivered
+
+
 def schedule_repair(
     bot: Bot,
     group_id: str,
@@ -62,7 +73,7 @@ def schedule_repair(
         # Deterministic outcomes: retrying cannot change them.
         return
     key = repair_key(group_id, source_url)
-    if key in _pending:
+    if is_repair_pending(group_id, source_url):
         return
     _pending.add(key)
     task = asyncio.create_task(_repair(bot, group_id, source_url, reason, service, key))
@@ -87,7 +98,13 @@ async def _repair(
             try:
                 video = await service.convert(source_url)
                 await deliver(bot, group_id, source_url, video, note=note)
+                _delivered[key] = time.monotonic() + 300
                 logger.info("链接补发成功（第 %s 次）：%s -> 群 %s", attempt, source_url, group_id)
+                _schedule_cleanup(service, video)
+                return
+            except DeliveryUncertain:
+                _delivered[key] = time.monotonic() + 300
+                logger.warning("补发发送结果不确定，停止自动重发：%s -> 群 %s", source_url, group_id)
                 _schedule_cleanup(service, video)
                 return
             except (JobFailed, asyncio.TimeoutError, OSError) as exc:

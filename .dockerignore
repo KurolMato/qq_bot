@@ -15,6 +15,8 @@ assets/previews
 .env.*
 !.env.example
 .tmp
+.tmp-*
+tests/.tmp*
 .tools
 .dsh*
 **/cordis.patch.yml

@@ -32,7 +32,7 @@ def proactive_allowed(
     return idle_seconds >= idle_minutes * 60
 
 
-STICKER_SEND_PROBABILITY = 0.5
+STICKER_SEND_PROBABILITY = 0.33
 
 
 def should_send_sticker() -> bool:

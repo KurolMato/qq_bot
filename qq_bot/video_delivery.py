@@ -12,6 +12,9 @@ from .service import CompletedVideo
 
 logger = logging.getLogger(__name__)
 
+class DeliveryUncertain(RuntimeError):
+    """A send was attempted, but delivery could not be confirmed safely."""
+
 _TITLE_PLATFORMS = {"xiaoheihe", "bilibili"}
 _IMAGE_NICKNAMES = {"douyin": "抖音图文", "bilibili": "B站图文", "xiaoheihe": "小黑盒图文"}
 
@@ -23,6 +26,15 @@ async def deliver(
     video: CompletedVideo,
     note: str = "",
 ) -> None:
+    try:
+        await _deliver(bot, group_id, source_url, video, note)
+    except Exception as exc:
+        # A missing/failed OneBot response does not prove QQ did not accept
+        # the upload. Replaying the post can duplicate videos or partial albums.
+        raise DeliveryUncertain(f"{type(exc).__name__}: send result unconfirmed") from exc
+
+
+async def _deliver(bot, group_id, source_url, video, note="") -> None:
     """Send one converted post to a group, matching the normal link handler."""
     if note:
         await bot.send_group_msg(group_id=int(group_id), message=note)

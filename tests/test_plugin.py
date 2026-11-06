@@ -45,7 +45,60 @@ class _Bot:
 
 def _reset_plugin_state() -> None:
     plugin._recent.clear()
+    plugin._processing.clear()
     plugin._shared_videos.clear()
+
+
+@pytest.mark.parametrize('source', ['https://b23.tv/example', 'https://v.douyin.com/example/'])
+def test_send_timeout_never_schedules_duplicate_video(monkeypatch, source):
+    from nonebot.adapters.onebot.v11.exception import NetworkError
+    _reset_plugin_state()
+    monkeypatch.setattr(plugin, 'extract_video_urls', lambda payload: [source])
+    monkeypatch.setattr(plugin, 'config', SimpleNamespace(allowed_groups=frozenset()))
+    monkeypatch.setattr(plugin, 'VIDEO_CLEANUP_DELAY_SECONDS', 0)
+    convert = AsyncMock(return_value=CompletedVideo('job', 'http://localhost/video', 'v.mp4', 123))
+    monkeypatch.setattr(plugin, 'service', SimpleNamespace(convert=convert, delete=AsyncMock()))
+    repair = AsyncMock()
+    monkeypatch.setattr(plugin, 'schedule_repair', repair)
+    bot = _Bot()
+    async def accepted_without_reply(**kwargs):
+        bot.messages.append(kwargs)
+        raise NetworkError('WebSocket call api send_group_msg timeout')
+    bot.send_group_msg = accepted_without_reply
+    async def run():
+        await plugin.handle_video_link(bot, _Event(100))
+        await plugin.handle_video_link(bot, _Event(100))
+        shared = plugin._shared_videos[source]
+        await shared.cleanup_task
+    asyncio.run(run())
+    assert len(bot.messages) == 1
+    assert convert.await_count == 1
+    repair.assert_not_called()
+    _reset_plugin_state()
+
+
+def test_long_conversion_keeps_group_claim_until_delivery(monkeypatch):
+    _reset_plugin_state()
+    monkeypatch.setattr(plugin, 'config', SimpleNamespace(allowed_groups=frozenset()))
+    monkeypatch.setattr(plugin, 'VIDEO_CLEANUP_DELAY_SECONDS', 0)
+    # Negative TTL simulates a job outliving its duplicate window.
+    monkeypatch.setattr(plugin, 'VIDEO_DEDUPLICATE_SECONDS', -1)
+    async def run():
+        ready = asyncio.Event()
+        async def convert(url):
+            await ready.wait()
+            return CompletedVideo('job', 'http://localhost/video', 'v.mp4', 123)
+        monkeypatch.setattr(plugin, 'service', SimpleNamespace(convert=convert, delete=AsyncMock()))
+        bot = _Bot()
+        first = asyncio.create_task(plugin.handle_video_link(bot, _Event(100)))
+        await asyncio.sleep(0)
+        await plugin.handle_video_link(bot, _Event(100))
+        ready.set()
+        await first
+        await plugin._shared_videos[VIDEO_URL].cleanup_task
+        assert len(bot.messages) == 1
+    asyncio.run(run())
+    _reset_plugin_state()
 
 
 def test_failed_conversion_releases_group_deduplication(monkeypatch) -> None:
@@ -254,7 +307,7 @@ def test_image_forward_threshold_order_and_cleanup(monkeypatch, count, source, t
     _reset_plugin_state()
 
 
-def test_xiaoheihe_failed_forward_releases_dedup_and_shared_lease(monkeypatch):
+def test_xiaoheihe_uncertain_forward_retains_dedup_and_releases_shared_lease(monkeypatch):
     _reset_plugin_state()
     source = "https://www.xiaoheihe.cn/app/bbs/link/5a28725c3264"
     result = CompletedVideo("pictures", "", "", 0, image_urls=tuple(f"http://localhost/{i}" for i in range(6)))
@@ -268,7 +321,7 @@ def test_xiaoheihe_failed_forward_releases_dedup_and_shared_lease(monkeypatch):
         await plugin.handle_video_link(bot, _Event(100))
         shared = plugin._shared_videos[source]
         assert shared.leases == 0
-        assert ("100", source) not in plugin._recent
+        assert ("100", source) in plugin._recent
         await shared.cleanup_task
     asyncio.run(run())
     assert bot.messages == []

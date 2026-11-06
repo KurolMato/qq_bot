@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from nonebot import on_message
-from nonebot.adapters.onebot.v11 import Bot, GroupMessageEvent, MessageSegment
+from nonebot.adapters.onebot.v11 import Bot, GroupMessageEvent, Message, MessageSegment
 
 from .dsh_reply import sticker_message
 from .dsh_client import split_bubbles, trim_answer
@@ -105,6 +105,49 @@ async def _send_sticker(bot: Bot, event: GroupMessageEvent, category: str | None
     return True
 
 
+def _contains_video(content) -> bool:
+    if isinstance(content, list):
+        return any((seg.get("type") if isinstance(seg, dict) else getattr(seg, "type", None))
+                   == "video" for seg in content)
+    try:
+        return any(seg.type == "video" for seg in Message(content)) if content is not None else False
+    except (TypeError, ValueError):
+        return False
+
+
+async def _replies_to_bot_video(bot: Bot, event: GroupMessageEvent) -> bool:
+    """Ignore comments on our videos, including QQ's automatic reply @mention."""
+    reply = getattr(event, "reply", None)
+    sender = getattr(reply, "sender", None)
+    author = sender.get("user_id") if isinstance(sender, dict) else getattr(sender, "user_id", None)
+    content = getattr(reply, "message", None)
+    self_ids = {str(bot.self_id), str(event.self_id)}
+    if content is not None and not _contains_video(content):
+        return False
+    if author is not None and str(author) not in self_ids:
+        return False
+    if author is None or content is None:
+        message_id = getattr(reply, "message_id", None)
+        if message_id is None:
+            message_id = next((seg.data.get("id") for seg in event.original_message
+                               if seg.type == "reply"), None)
+        if message_id is None:
+            return False
+        try:
+            payload = await asyncio.wait_for(bot.get_msg(message_id=message_id), 3)
+            if not isinstance(payload, dict):
+                return False
+            author = (payload.get("sender") or {}).get("user_id")
+            content = payload.get("message")
+            if content is not None:
+                # Reuse this lookup when normal text/image context is built later.
+                setattr(event, "_dsh_quoted_message", content)
+        except Exception:
+            logger.debug("Unable to identify quoted video", exc_info=True)
+            return False
+    return str(author) in self_ids and _contains_video(content)
+
+
 @_matcher.handle()
 async def handle_group_question(bot: Bot, event: GroupMessageEvent) -> None:
     group_id = str(event.group_id)
@@ -126,6 +169,8 @@ async def handle_group_question(bot: Bot, event: GroupMessageEvent) -> None:
     if not _enabled():
         return
     if allowed_groups() and group_id not in allowed_groups():
+        return
+    if text_now and await _replies_to_bot_video(bot, event):
         return
     request = project_images.image_request(text_now) if text_now else None
     if request is not None:
@@ -164,10 +209,17 @@ async def handle_group_question(bot: Bot, event: GroupMessageEvent) -> None:
         )
         mention_labels = await _at_names(bot, group_id, [str(q) for q in at_targets if q])
         mention_line = f"被@的人：{'、'.join(mention_labels)}；" if mention_labels else ""
+        styles = await asyncio.to_thread(dsh_commands.load_styles, dsh_commands.STYLE_FILE)
+        style_points = dsh_commands.style_hint(styles, f"group:{group_id}").strip()
+        style_line = (
+            f"语气基调（必须照着说话，不是背景资料）：{style_points.strip('（）')}\n"
+            if style_points else ""
+        )
         prompt = (
             f"（群聊场景：提问者 {asker}（QQ {event.user_id}），不是主人；{mention_line}群里其他人的名字就是 QQ 名片，"
             f"看不到就是没传到；主人只有 {_owner_name()}。\n"
-            f"只回答这一个问题，简短，最多四条。不聊项目内部文件、日志和配置；"
+            f"{style_line}"
+            f"只回答这一个问题，简短，最多四条；用上面的语气，别写成正经回答。不聊项目内部文件、日志和配置；"
             f"被问到这些就让他们私聊 {_owner_name()}。\n"
             "如果问题是在问这个机器人怎么用、怎么添加某个平台账号，就按下面的说明回答：\n"
             f"{USAGE_TEXT}\n"
@@ -176,8 +228,6 @@ async def handle_group_question(bot: Bot, event: GroupMessageEvent) -> None:
             f"{text}"
         )
         prompt += sticker_hint(sticker_root(PROJECT_ROOT))
-        styles = await asyncio.to_thread(dsh_commands.load_styles, dsh_commands.STYLE_FILE)
-        prompt += dsh_commands.style_hint(styles, f"group:{group_id}")
         started = time.monotonic()
         try:
             answer = await asyncio.to_thread(dsh_commands.readonly_client.prompt, session_id, prompt, images)

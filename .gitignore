@@ -50,6 +50,8 @@ assets/previews/
 
 # Test/probe output and one-off local maintenance scripts.
 /.tmp/
+/.tmp-*/
+/tests/.tmp*/
 /.pt*/
 /.pytest-tmp*/
 /ptmp/

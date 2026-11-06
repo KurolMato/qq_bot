@@ -3,6 +3,9 @@ import sqlite3
 from pathlib import Path
 
 import pytest
+import requests
+from types import SimpleNamespace
+from unittest.mock import Mock
 
 from qq_bot.ps5_registry import (
     Ps5Client,
@@ -16,7 +19,41 @@ from qq_bot.ps5_registry import (
     normalize_online_id,
     parse_ps5_activity,
     psn_user_message,
+    _request_with_direct_fallback,
 )
+
+
+@pytest.mark.parametrize('error', [requests.exceptions.ProxyError, requests.exceptions.SSLError, requests.Timeout])
+def test_psn_transport_failure_retries_direct_and_restores_route(error):
+    session = SimpleNamespace(trust_env=True)
+    routes = []
+    def request(*args, **kwargs):
+        routes.append(session.trust_env)
+        assert kwargs['timeout'] == (10, 20)
+        assert kwargs.get('verify', True) is True
+        if session.trust_env:
+            raise error('connection failed')
+        return 'response'
+    assert _request_with_direct_fallback(session, request, 'GET', 'https://example.com') == 'response'
+    assert routes == [True, False]
+    assert session.trust_env is True
+
+
+def test_psn_http_response_is_not_replayed():
+    session = SimpleNamespace(trust_env=True)
+    response = SimpleNamespace(status_code=401)
+    request = Mock(return_value=response)
+    assert _request_with_direct_fallback(session, request, 'GET', 'https://example.com') is response
+    request.assert_called_once()
+
+
+def test_psn_failed_direct_retry_restores_session():
+    session = SimpleNamespace(trust_env=True)
+    request = Mock(side_effect=requests.ConnectionError('unavailable'))
+    with pytest.raises(requests.ConnectionError):
+        _request_with_direct_fallback(session, request, 'GET', 'https://example.com')
+    assert request.call_count == 2
+    assert session.trust_env is True
 
 
 def subscription(**overrides: object) -> Ps5Subscription:

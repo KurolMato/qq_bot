@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any, Callable, Mapping, TypeVar
 
 import nonebot
+import requests
 from nonebot.adapters.onebot.v11 import Bot
 
 from .game_time_tracker import tracker as game_time_tracker
@@ -323,6 +324,24 @@ class Ps5Registry:
             )
 
 
+def _request_with_direct_fallback(session, request, *args, **kwargs):
+    """Retry transport failures without a stale environment/system proxy."""
+    kwargs.setdefault("timeout", (10, 20))
+    try:
+        return request(*args, **kwargs)
+    except (requests.ConnectionError, requests.Timeout):
+        if not session.trust_env:
+            raise
+        # All PSNAWP work on this session runs in the client's single worker.
+        # Restore the route afterward; never disable TLS certificate checks.
+        logger.warning("PSN transport failed; retrying with direct connection")
+        session.trust_env = False
+        try:
+            return request(*args, **kwargs)
+        finally:
+            session.trust_env = True
+
+
 class Ps5Client:
     def __init__(self) -> None:
         self._api: Any | None = None
@@ -354,7 +373,7 @@ class Ps5Client:
         if self._api is None or self._npsso != npsso:
             self._api = PSNAWP(npsso)
             session = self._api.authenticator.request_builder.session
-            session.request = partial(session.request, timeout=(10, 20))
+            session.request = partial(_request_with_direct_fallback, session, session.request)
             self._npsso = npsso
         return self._api
 

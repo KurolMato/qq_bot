@@ -30,6 +30,13 @@ DEFAULT_KEY_PATH = PROJECT_ROOT / "secrets" / "steam-api-key.txt"
 DEFAULT_STEAMGRIDDB_KEY_PATH = PROJECT_ROOT / "secrets" / "steamgriddb-api-key.txt"
 API_ROOT = "https://api.steampowered.com"
 STEAMGRIDDB_API_ROOT = "https://www.steamgriddb.com/api/v2"
+# Explicit artwork choices take precedence over automatic portrait discovery.
+STEAM_COVER_OVERRIDES = {
+    "4115450": (
+        "https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/"
+        "4115450/40b2044606b59e0cdd9fb89738895fea8a22067c/header_schinese.jpg"
+    ),  # Phantom Blade Zero: official Chinese landscape artwork.
+}
 STEAM_ID_RE = re.compile(r"^\d{17}$")
 STEAM_ACCOUNT_ID_BASE = 76561197960265728
 VANITY_RE = re.compile(r"^[A-Za-z0-9_-]{2,64}$")
@@ -562,6 +569,8 @@ class SteamClient:
             return None
 
     async def game_cover(self, app_id: str) -> str | None:
+        if app_id in STEAM_COVER_OVERRIDES:
+            return STEAM_COVER_OVERRIDES[app_id]
         if app_id in self._cover_cache:
             return self._cover_cache[app_id]
         conventional = (

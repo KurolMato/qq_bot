@@ -567,19 +567,35 @@ class XboxClient:
         if not xuids:
             return {}
         async def direct(client: Any) -> dict[str, Mapping[str, Any]]:
+            people_records: dict[str, Mapping[str, Any]] = {}
             try:
                 people = self._dump(await client.people.get_friends_own_batch(
                     xuids, decoration_fields=["presenceDetail", "titlePresence"]
                 ))
                 people_records = _people_presence_records(people)
-                if people_records:
-                    return people_records
             except Exception as exc:
                 logger.debug("Xbox PeopleHub presence unavailable: %s", type(exc).__name__)
-            return _presence_records([
-                self._dump(item)
-                for item in await client.presence.get_presence_batch(xuids, presence_level="all")
-            ])
+            # A PeopleHub player record can omit current title details. Resolve
+            # those players separately instead of treating a nonempty batch as
+            # complete and suppressing the Presence API fallback for everyone.
+            missing = [xuid for xuid in xuids
+                       if xuid not in people_records or not _active_game(people_records[xuid])]
+            if not missing:
+                return people_records
+            try:
+                fallback_records = _presence_records([
+                    self._dump(item)
+                    for item in await client.presence.get_presence_batch(missing, presence_level="all")
+                ])
+            except Exception as exc:
+                if not people_records:
+                    raise
+                logger.warning("Xbox Presence fallback unavailable: %s", type(exc).__name__)
+                return people_records
+            for xuid, record in fallback_records.items():
+                if xuid not in people_records or _active_game(record):
+                    people_records[xuid] = record
+            return people_records
 
         async def fallback() -> dict[str, Mapping[str, Any]]:
             return _presence_records(await self._openxbl_get(f"{','.join(xuids)}/presence"))

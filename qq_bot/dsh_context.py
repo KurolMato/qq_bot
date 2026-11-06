@@ -181,7 +181,9 @@ async def forward_text(bot: Bot, event: PrivateMessageEvent) -> str:
 async def quoted_message(bot: Bot, event) -> Message:
     """Use the adapter's resolved reply, falling back to OneBot when necessary."""
     reply = getattr(event, "reply", None)
-    raw = getattr(reply, "message", None)
+    raw = getattr(event, "_dsh_quoted_message", None)
+    if raw is None:
+        raw = getattr(reply, "message", None)
     message_id = getattr(reply, "message_id", None)
     if message_id is None:
         for segment in event.get_message():

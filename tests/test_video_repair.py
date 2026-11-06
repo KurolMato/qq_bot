@@ -9,6 +9,39 @@ from qq_bot.service import CompletedVideo
 from qq_bot.video_repair import parse_delays, repair_key, schedule_repair
 
 
+def test_repair_stops_after_send_timeout_and_blocks_parallel_handler(monkeypatch):
+    from nonebot.adapters.onebot.v11.exception import NetworkError
+    from qq_bot import plugin
+    from unittest.mock import AsyncMock
+    from types import SimpleNamespace
+    monkeypatch.setenv('QQ_REPAIR_DELAYS', '0,0,0')
+    monkeypatch.setenv('QQ_REPAIR_ENABLED', 'true')
+    monkeypatch.setenv('QQ_REPAIR_NOTE', '')
+    monkeypatch.setattr(video_repair, '_schedule_cleanup', lambda *args: None)
+    bot = FakeBot()
+    bot.send = AsyncMock()
+    source = 'https://v.douyin.com/uncertain/'
+    async def send(**kwargs):
+        bot.group_messages.append(kwargs)
+        raise NetworkError('WebSocket timeout')
+    bot.send_group_msg = send
+    service = FakeService()
+    monkeypatch.setattr(plugin, 'extract_video_urls', lambda payload: [source])
+    monkeypatch.setattr(plugin, 'config', SimpleNamespace(allowed_groups=frozenset()))
+    foreground = AsyncMock()
+    monkeypatch.setattr(plugin, '_acquire_shared_video', foreground)
+    event = SimpleNamespace(group_id=123, message_id=1, get_message=lambda: [])
+    async def run():
+        schedule_repair(bot, '123', source, 'download failed', service)
+        await plugin.handle_video_link(bot, event)
+        await asyncio.gather(*list(video_repair._tasks))
+        await plugin.handle_video_link(bot, event)
+    asyncio.run(run())
+    assert service.calls == 1
+    assert len(bot.group_messages) == 1
+    foreground.assert_not_awaited()
+
+
 class FakeBot:
     self_id = "10000"
 

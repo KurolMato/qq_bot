@@ -15,8 +15,8 @@ from app.downloader import video_platform
 from .config import BotConfig
 from .links import extract_video_urls
 from .service import CompletedVideo, JobFailed, VideoServiceClient
-from .video_delivery import deliver
-from .video_repair import schedule_repair
+from .video_delivery import DeliveryUncertain, deliver
+from .video_repair import is_repair_pending, schedule_repair
 
 
 logger = logging.getLogger(__name__)
@@ -24,6 +24,7 @@ config = BotConfig.from_env()
 service = VideoServiceClient(config)
 matcher = on_message(priority=20, block=False)
 _recent: dict[tuple[str, str], float] = {}
+_processing: set[tuple[str, str]] = set()
 _lock = asyncio.Lock()
 
 
@@ -62,7 +63,7 @@ async def _is_duplicate(group_id: str, url: str) -> bool:
         expired = [
             item
             for item, timestamp in _recent.items()
-            if now - timestamp > VIDEO_DEDUPLICATE_SECONDS
+            if now - timestamp > VIDEO_DEDUPLICATE_SECONDS and item not in _processing
         ]
         for item in expired:
             _recent.pop(item, None)
@@ -198,7 +199,7 @@ async def handle_video_link(bot: Bot, event: GroupMessageEvent) -> None:
     urls = extract_video_urls(payload)
     if not urls:
         return
-    if await _is_duplicate(group_id, urls[0]):
+    if is_repair_pending(group_id, urls[0]) or await _is_duplicate(group_id, urls[0]):
         if video_platform(urls[0]) == "xiaoheihe":
             return
         await bot.send(
@@ -208,12 +209,19 @@ async def handle_video_link(bot: Bot, event: GroupMessageEvent) -> None:
         return
 
     source_url = urls[0]
+    _processing.add((group_id, source_url))
     shared: _SharedVideo | None = None
+    sending = False
     try:
         shared, video = await _acquire_shared_video(source_url)
+        sending = True
         await deliver(bot, event.group_id, source_url, video)
+    except DeliveryUncertain:
+        logger.warning("QQ video send result uncertain; automatic resend disabled: group=%s url=%s",
+                       group_id, source_url, exc_info=True)
     except asyncio.CancelledError:
-        await _forget_duplicate(group_id, source_url)
+        if not sending:
+            await _forget_duplicate(group_id, source_url)
         raise
     except JobFailed as exc:
         detail = str(exc)
@@ -236,5 +244,9 @@ async def handle_video_link(bot: Bot, event: GroupMessageEvent) -> None:
         logger.exception("Unexpected QQ video processing error")
         schedule_repair(bot, group_id, source_url, f"{type(exc).__name__}: {exc}", service)
     finally:
+        async with _lock:
+            _processing.discard((group_id, source_url))
+            if (group_id, source_url) in _recent:
+                _recent[(group_id, source_url)] = time.monotonic()
         if shared is not None:
             await _release_shared_video(source_url, shared)

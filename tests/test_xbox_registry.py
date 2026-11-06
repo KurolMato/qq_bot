@@ -1,5 +1,7 @@
 import asyncio
 import importlib
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 from pathlib import Path
 
 import pytest
@@ -19,6 +21,57 @@ from qq_bot.xbox_registry import (
     parse_xbox_profile,
     xbox_user_message,
 )
+
+
+@pytest.mark.parametrize('fallback_error', [False, True])
+def test_incomplete_peoplehub_queries_missing_players(monkeypatch, fallback_error):
+    client = XboxClient()
+    people = {'people': [
+        {'xuid': '42', 'presenceState': 'Offline', 'presenceDetails': []},
+        {'xuid': '43', 'presenceState': 'Online', 'presenceDetails': [
+            {'IsGame': True, 'TitleId': '1', 'PresenceText': 'Halo', 'State': 'Active'}]},
+    ]}
+    batch = AsyncMock(return_value=[
+        {'xuid': '42', 'state': 'Online', 'devices': [{'titles': [
+            {'name': 'League of Legends', 'state': 'Active'}]}]},
+        {'xuid': '44', 'state': 'Offline'},
+    ])
+    if fallback_error:
+        batch.side_effect = RuntimeError('unavailable')
+    live = SimpleNamespace(
+        people=SimpleNamespace(get_friends_own_batch=AsyncMock(return_value=people)),
+        presence=SimpleNamespace(get_presence_batch=batch),
+    )
+    async def direct(operation, callback):
+        return await callback(live)
+    monkeypatch.setattr(client, '_direct_call', direct)
+    monkeypatch.setattr(XboxClient, 'direct_configured', property(lambda _: True))
+    records = asyncio.run(client.presences(['42', '43', '44']))
+    batch.assert_awaited_once_with(['42', '44'], presence_level='all')
+    assert parse_xbox_activity(subscription(), records['43']).game_name == 'Halo'
+    activity = parse_xbox_activity(subscription(), records['42'])
+    assert activity.game_name == (None if fallback_error else 'League of Legends')
+    if not fallback_error:
+        assert '44' in records
+        assert _should_notify(subscription(initialised=True), activity.game_key)
+
+
+def test_complete_peoplehub_does_not_query_backup(monkeypatch):
+    client = XboxClient()
+    batch = AsyncMock()
+    live = SimpleNamespace(
+        people=SimpleNamespace(get_friends_own_batch=AsyncMock(return_value={'people': [
+            {'xuid': '42', 'presenceState': 'Online', 'presenceDetails': [
+                {'IsGame': True, 'PresenceText': 'Halo', 'State': 'Active'}]},
+        ]})),
+        presence=SimpleNamespace(get_presence_batch=batch),
+    )
+    async def direct(operation, callback):
+        return await callback(live)
+    monkeypatch.setattr(client, '_direct_call', direct)
+    monkeypatch.setattr(XboxClient, 'direct_configured', property(lambda _: True))
+    assert '42' in asyncio.run(client.presences(['42']))
+    batch.assert_not_awaited()
 
 
 def test_direct_call_persists_refreshed_token_before_business_callback(

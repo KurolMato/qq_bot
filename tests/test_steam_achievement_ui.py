@@ -163,3 +163,54 @@ def test_message_uses_cached_assets_and_one_image(monkeypatch):
     assert sum(segment.type == 'text' for segment in message) == 1
     assert load.await_count == 3
     assert {call.args[0] for call in load.await_args_list} == {None,'https://example.com/icon','https://example.com/avatar'}
+
+
+@pytest.mark.parametrize('failure', ['missing', 'timeout', 'all_missing'])
+def test_legacy_icon_routes_recover_and_render(monkeypatch, failure):
+    from qq_bot import steam_achievement_card as card
+    path = '/steamcommunity/public/images/apps/4115450/icon.jpg'
+    encoded = BytesIO()
+    Image.new('RGB', (64, 64), '#e02040').save(encoded, 'PNG')
+    attempted = []
+
+    async def load(url, semaphore):
+        if not url:
+            return None
+        attempted.append(url)
+        if 'cdn.akamai.' in url and failure == 'timeout':
+            await asyncio.sleep(60)
+        if 'cdn.cloudflare.' in url and failure != 'all_missing':
+            return encoded.getvalue()
+        return None
+
+    monkeypatch.setattr(card, '_load_image', load)
+    monkeypatch.setattr(card, 'ICON_ROUTE_TIMEOUT', .01)
+    rendered = []
+    def render(*args, **kwargs):
+        content = render_card(*args, **kwargs)
+        rendered.append(content)
+        return content
+    monkeypatch.setattr(card, 'render_card', render)
+    payload = dict(title='Game', total=2, detected_at=1000,
+                   achievement_icon='https://steamcdn-a.akamaihd.net' + path)
+    message = asyncio.run(card.build_message('Name', payload))
+    assert sum(s.type == 'image' for s in message) == 1
+    assert attempted == ['https://cdn.akamai.steamstatic.com' + path,
+                         'https://cdn.cloudflare.steamstatic.com' + path] + (
+                             ['https://steamcdn-a.akamaihd.net' + path] if failure == 'all_missing' else [])
+    if failure != 'all_missing':
+        with Image.open(BytesIO(rendered[0])) as image:
+            r, g, b = image.getpixel((598, 536))
+            assert r > 200 and g < 60 and b < 90
+
+
+@pytest.mark.parametrize('url', [
+    'https://steamcdn-a.akamaihd.net.example.com/steamcommunity/public/images/apps/1/icon.jpg',
+    'https://steamcdn-a.akamaihd.net/other/image.jpg',
+])
+def test_icon_fallback_only_rewrites_known_asset_routes(monkeypatch, url):
+    from qq_bot import steam_achievement_card as card
+    load = AsyncMock(return_value=b'image')
+    monkeypatch.setattr(card, '_load_image', load)
+    assert asyncio.run(card._load_achievement_icon(url, asyncio.Semaphore(3))) == b'image'
+    assert [call.args[0] for call in load.await_args_list] == [url]
