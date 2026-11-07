@@ -4,7 +4,7 @@ import asyncio
 import logging
 
 from nonebot import on_command
-from nonebot.adapters.onebot.v11 import Bot, GroupMessageEvent, Message
+from nonebot.adapters.onebot.v11 import Bot, GroupMessageEvent, Message, PrivateMessageEvent
 from nonebot.adapters.onebot.v11.exception import ActionFailed, NetworkError
 from nonebot.params import CommandArg
 
@@ -14,6 +14,7 @@ from .game_time_tracker import tracker
 from .monthly_rank_cache import monthly_cache
 from .personal_game_time import PERIODS, parse_personal_query, resolve_binding_name
 from .personal_rank import build_personal_rank_message
+from .hot_games import build_hot_games_message
 
 
 logger = logging.getLogger(__name__)
@@ -35,6 +36,54 @@ async def _send_reply(bot: Bot, event: GroupMessageEvent, message: str | Message
 
 
 config = BotConfig.from_env()
+hot_command = on_command("hot", priority=10, block=True)
+_pending_hot: set[tuple[str, str, str | None]] = set()
+_HOT_USAGE = "用法：/hot 本周热游；/hot m 本月热游（按游玩人数排名）"
+
+
+@hot_command.handle()
+async def handle_hot_command(bot: Bot, event: GroupMessageEvent,
+                             argument: Message = CommandArg()) -> None:
+    group_id = str(event.group_id)
+    if config.allowed_groups and group_id not in config.allowed_groups:
+        return
+    text = argument.extract_plain_text().strip().casefold()
+    if text not in {"", "m"}:
+        await _send_reply(bot, event, _HOT_USAGE)
+        return
+    period = "month" if text == "m" else "week"
+    private_user = str(event.user_id) if getattr(event, "message_type", None) == "private" else None
+    key = (group_id, period, private_user)
+    if key in _pending_hot:
+        return
+    _pending_hot.add(key)
+    try:
+        try:
+            reply = await build_hot_games_message(tracker, group_id, period)
+        except Exception:
+            logger.exception("Hot games query failed for group %s", group_id)
+            reply = "群热游生成失败，请稍后再试。"
+        await _send_reply(bot, event, reply)
+    finally:
+        _pending_hot.discard(key)
+
+
+@hot_command.handle()
+async def handle_private_hot_command(
+    bot: Bot, event: PrivateMessageEvent, argument: Message = CommandArg(),
+) -> None:
+    from . import dsh_commands
+    from .project_images import ImageRequest, private_image_request
+
+    if not dsh_commands._enabled() or not dsh_commands.is_allowed(event.user_id):
+        return
+    text = argument.extract_plain_text().strip().casefold()
+    if text not in {"", "m"}:
+        await bot.send(event, _HOT_USAGE)
+        return
+    await private_image_request(bot, event, "", request=ImageRequest("hot", text))
+
+
 rank_command = on_command(
     "rank",
     aliases={"排行", "游戏排行", "今日排行", "排", "排名", "排行榜"},

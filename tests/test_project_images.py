@@ -19,6 +19,8 @@ def action_text(data):
     ({"action": "rank", "period": "week"}, ImageRequest("rank", "w")),
     ({"action": "rank", "period": "yesterday", "scope": "me"}, ImageRequest("rank", "me y")),
     ({"action": "rank", "period": "month", "month": 9, "board": "other"}, ImageRequest("rank", "o m 9")),
+    ({"action": "hot"}, ImageRequest("hot", "")),
+    ({"action": "hot", "period": "month"}, ImageRequest("hot", "m")),
     ({"action": "profile", "month": 9}, ImageRequest("rank", "me 9")),
     ({"action": "players", "platform": "psn"}, ImageRequest("psn", "list")),
     ({"action": "calendar"}, ImageRequest("game", "list")),
@@ -40,6 +42,8 @@ def test_valid_model_actions(data, expected):
     {"action": "rank", "scope": "another_user"},
     {"action": "rank", "scope": "me", "board": "other"},
     {"action": "rank", "month": 9},
+    {"action": "hot", "period": "last_month"},
+    {"action": "hot", "period": "month", "group_id": "999"},
     {"action": "profile", "month": True},
     {"action": "profile", "month": 13},
     {"action": "players", "platform": "steam remove 123"},
@@ -85,6 +89,8 @@ def test_incomplete_model_turn_never_dispatches(monkeypatch, cancelled, stop):
     ("我的今日排行", "rank", "me d"), ("我的周榜", "rank", "me w"),
     ("9月排行", "rank", "m 9"), ("另一组排行", "rank", "o"),
     ("我的9月档案", "rank", "me 9"), ("另一组周榜", "rank", "o w"),
+    ("/hot", "hot", ""), ("/hot m", "hot", "m"),
+    ("本周热游", "hot", ""), ("帮我看看这个月群热游榜", "hot", "m"),
     ("在线", "game", "ol"), ("谁在线", "game", "ol"),
     ("Steam列表", "steam", "list"), ("PS5玩家列表", "psn", "list"),
     ("switch 列表", "switch", "list"), ("Xbox名单", "xbox", "list"),
@@ -102,6 +108,7 @@ def test_image_request(text, kind, argument):
 @pytest.mark.parametrize("text", [
     "不要发Steam列表", "Steam列表怎么用", "排行榜不错", "游戏进度 add something",
     "游戏进度 list", "steam remove 123", "rank remove 游戏", "发售日历 add", "普通聊天",
+    "别发本月热游", "/hot m 怎么用", "/hot m 9", "上月热游",
 ])
 def test_not_a_read_only_image_request(text):
     assert image_request(text) is None
@@ -109,6 +116,7 @@ def test_not_a_read_only_image_request(text):
 
 @pytest.mark.parametrize(("kind", "module", "name", "argument"), [
     ("rank", "game_time_commands", "handle_rank_command", ""),
+    ("hot", "game_time_commands", "handle_hot_command", "m"),
     ("game", "game_commands", "handle_game_command", "ol"),
     ("steam", "steam_commands", "handle_steam_command", "list"),
     ("psn", "ps5_commands", "handle_ps5_command", "list"),
@@ -134,6 +142,7 @@ def test_dispatch_reuses_existing_handlers(monkeypatch, kind, module, name, argu
 @pytest.mark.parametrize(("groups", "text", "expected"), [
     ("123", "排行", "123"), ("123,456", "排行", None),
     ("123,456", "群号 456 在线", "456"), ("123", "群号 999 排行", None),
+    ("123,456", "群号 456 /hot m", "456"), ("123", "群号 999 /hot", None),
 ])
 def test_private_scope_and_delivery(monkeypatch, groups, text, expected):
     nonebot.init()

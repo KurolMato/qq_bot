@@ -192,6 +192,7 @@ def test_text_only_quote_preserves_question(commands):
 @pytest.mark.parametrize(("question", "answer", "expected"), [
     ("大家这会儿都在玩啥", '[[PROJECT_IMAGE:{"action":"online"}]]', "ol"),
     ("把这个月要出的游戏给我瞅瞅", '[[PROJECT_IMAGE:{"action":"calendar"}]]', "list"),
+    ("这个月哪些游戏玩的人最多", '[[PROJECT_IMAGE:{"action":"hot","period":"month"}]]', "m"),
     ("大家这会儿都在玩啥", '[[PROJECT_IMAGE:{"action":"progress","game":"add bad"}]]', None),
     ("不要发图，随便聊聊", "聊什么呀？", None),
 ])

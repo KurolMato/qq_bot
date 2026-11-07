@@ -10,6 +10,7 @@ USAGE_TEXT = """\
 /switch add SW-1234-5678-9012 [昵称] / /switch list / /switch remove 好友码
 /xbox add 玩家代号 [昵称] / /xbox list
 /rank 今日排行；/rank y 昨日；/rank w 本周；/rank m 本月；/rank me 个人排行
+/hot 本周热游；/hot m 本月热游，按游玩人数排名
 也可以直接 @机器人说“排行”“周榜”“我的排名”，直接发送对应排行榜。
 其他图片：@机器人 在线、Steam列表、PSN列表、Switch列表、Xbox列表、发售日历、发售日历 2027-9、游戏进度 游戏名、指令图。
 /game 游戏名、/hltb 游戏名：游戏资料和通关时长
