@@ -134,6 +134,42 @@ def test_long_outage_gap_is_not_counted(tmp_path: Path) -> None:
     assert tracker.snapshot("200").members == ()
 
 
+def test_switch_same_game_outage_is_backfilled_across_0400_after_restart(tmp_path: Path) -> None:
+    path = tmp_path / "time.db"
+    tracker = GameTimeTracker(path, max_sample_gap=300)
+    before = datetime(2026, 8, 28, 19, 50, tzinfo=UTC)
+    after = before + timedelta(minutes=40)
+    _observe(tracker, platform="switch", account="sw", name="Player", game="Game", at=before)
+
+    tracker = GameTimeTracker(path, max_sample_gap=300)
+    for _ in range(2):
+        _observe(tracker, platform="switch", account="sw", name="Player", game="GAME", at=after)
+
+    assert tracker.yesterday_snapshot("200", at=after).members[0].total_seconds == 600
+    assert tracker.snapshot("200", at=after).members[0].total_seconds == 1800
+
+
+def test_switch_outage_requires_same_game_and_is_limited_to_40_minutes(tmp_path: Path) -> None:
+    tracker = GameTimeTracker(tmp_path / "time.db", max_sample_gap=300)
+    before = datetime(2026, 8, 29, 5, tzinfo=UTC)
+    cases = (
+        ("offline", "Game", None, timedelta(minutes=10)),
+        ("different", "Game", "Another Game", timedelta(minutes=10)),
+        ("too-long", "Game", "Game", timedelta(minutes=40, seconds=1)),
+        ("idle", None, "Game", timedelta(minutes=10)),
+    )
+    for account, previous, current, gap in cases:
+        _observe(tracker, platform="switch", account=account, name=account, game=previous, at=before)
+        _observe(tracker, platform="switch", account=account, name=account, game=current, at=before + gap)
+
+    assert tracker.snapshot("200", at=before).members == ()
+
+    _observe(tracker, platform="switch", account="sw", name="Player", game="Game", at=before)
+    _observe(tracker, platform="switch", account="sw", name="Player", game=None, at=before + timedelta(minutes=2))
+    member = tracker.snapshot("200", at=before).members[0]
+    assert [(game.name, game.seconds) for game in member.games] == [("Game", 120)]
+
+
 def test_resolved_cover_backfills_existing_current_day_bucket(tmp_path: Path) -> None:
     tracker = GameTimeTracker(tmp_path / "time.db", max_sample_gap=300)
     start = datetime(2026, 8, 29, 5, 0, tzinfo=timezone(timedelta(hours=8))).astimezone(UTC)

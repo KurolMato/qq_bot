@@ -52,7 +52,8 @@ def test_display_filter_preserves_totals_and_order(monkeypatch, period, personal
     assert ("暂无超过1小时的游戏" in texts) == filtered
     assert len(snapshot.members[0].games) == 3
     with Image.open(BytesIO(content)) as image:
-        assert image.height == (580 if filtered else 740)
+        assert image.width == 900
+        assert image.height == (534 if filtered else 792)
 
 
 def test_monthly_assets_skip_hidden_game_covers(monkeypatch):

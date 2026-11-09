@@ -33,7 +33,7 @@ def test_concurrent_requests_and_restart_reuse_daily_image(tmp_path, monkeypatch
     asyncio.run(run())
     source.monthly_snapshot.assert_called_once()
     render.assert_awaited_once()
-    assert (tmp_path / '100/2026-09/main/2026-09-18.png').is_file()
+    assert (cache.root / '100/2026-09/main/2026-09-18.png').is_file()
 
 
 def test_daily_rollover_is_at_four_am(tmp_path, monkeypatch):
@@ -61,7 +61,17 @@ def test_groups_boards_and_historical_year_are_isolated(tmp_path, monkeypatch):
         assert source.monthly_snapshot.call_count == 4
 
     asyncio.run(run())
-    assert (tmp_path / '100/2025-12/main/2026-09-18.png').is_file()
+    assert (cache.root / '100/2025-12/main/2026-09-18.png').is_file()
+
+
+def test_legacy_layout_cache_does_not_hide_redesign(tmp_path, monkeypatch):
+    legacy = tmp_path / '100/2026-09/main/2026-09-18.png'
+    legacy.parent.mkdir(parents=True)
+    legacy.write_bytes(b'old-layout')
+    cache, _, render = make_cache(tmp_path, monkeypatch)
+    asyncio.run(cache.message('100', at=NOW))
+    render.assert_awaited_once()
+    assert legacy.read_bytes() == b'old-layout'
 
 
 def test_failed_refresh_keeps_previous_image(tmp_path, monkeypatch):

@@ -55,4 +55,4 @@ def test_long_rank_sends_exactly_one_complete_image(monkeypatch):
     content = base64.b64decode(message[0].data["file"].removeprefix("base64://"))
     assert len(content) <= board.MAX_IMAGE_BYTES
     with Image.open(BytesIO(content)) as image:
-        assert image.size == (900, 206 + 30 * 210)
+        assert image.size == (900, 156 + 330 + 29 * 192 + 30 * 16)

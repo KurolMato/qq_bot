@@ -136,7 +136,7 @@ def _prune_cache(keep: Path) -> None:
             pass
 
 
-async def _load_image(url: str | None, semaphore: asyncio.Semaphore) -> bytes | None:
+async def _load_image(url: str | None, semaphore: asyncio.Semaphore, *, download=None) -> bytes | None:
     if not url:
         return None
     path = _cache_path(url)
@@ -154,7 +154,7 @@ async def _load_image(url: str | None, semaphore: asyncio.Semaphore) -> bytes | 
             # 1-3 MB cover from mainland networks. Keep the fast timeout for
             # avatars/other stores, but allow this known CDN enough time.
             timeout = 18 if "img-eshop.cdn.nintendo.net" in url.casefold() else 6
-            content = await asyncio.wait_for(_download_image(url), timeout=timeout)
+            content = await asyncio.wait_for((download or _download_image)(url), timeout=timeout)
             if not content or not await asyncio.to_thread(_valid_image, content):
                 return None
             await asyncio.to_thread(CACHE_DIR.mkdir, parents=True, exist_ok=True)

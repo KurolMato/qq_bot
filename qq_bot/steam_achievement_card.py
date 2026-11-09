@@ -1,5 +1,8 @@
 import asyncio
 import logging
+import ssl
+import httpx
+import truststore
 from urllib.parse import urlsplit
 
 from nonebot.adapters.onebot.v11 import Message, MessageSegment
@@ -8,7 +11,17 @@ from .list_cards import _load_image
 from .steam_achievement_ui import render_card
 
 logger = logging.getLogger(__name__)
-ICON_ROUTE_TIMEOUT = 2
+ICON_ROUTE_TIMEOUT = 3
+
+
+async def _download_icon(url):
+    async with httpx.AsyncClient(trust_env=False, follow_redirects=True, timeout=3,
+                                 verify=truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)) as client:
+        response = await client.get(url)
+        response.raise_for_status()
+        if len(response.content) > 12 * 1024 * 1024:
+            raise ValueError('Achievement icon exceeds size limit')
+        return response.content
 
 
 async def _load_achievement_icon(url, semaphore):
@@ -22,10 +35,16 @@ async def _load_achievement_icon(url, semaphore):
         return await _load_image(url, semaphore)
     # Old schema URLs can fail or stall. Try modern CDN routes first, keeping
     # each attempt bounded so one dead route cannot consume the card budget.
-    for host in hosts:
-        candidate = parts._replace(scheme='https', netloc=host).geturl()
+    # Steam's current community UI uses shared CDN community_assets, while
+    # GetSchemaForGame can still return the retired steamcommunity path.
+    new_path = parts.path.replace('/steamcommunity/public/images/apps/',
+                                  '/community_assets/images/apps/', 1)
+    candidates = [parts._replace(scheme='https', netloc=host, path=new_path).geturl()
+                  for host in ('shared.akamai.steamstatic.com', 'shared.fastly.steamstatic.com')]
+    candidates.extend(parts._replace(scheme='https', netloc=host).geturl() for host in hosts)
+    for candidate in candidates:
         try:
-            content = await asyncio.wait_for(_load_image(candidate, semaphore), ICON_ROUTE_TIMEOUT)
+            content = await asyncio.wait_for(_load_image(candidate, semaphore, download=_download_icon), ICON_ROUTE_TIMEOUT)
         except TimeoutError:
             continue
         if content:

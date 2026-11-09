@@ -17,7 +17,8 @@ logger = logging.getLogger(__name__)
 
 def canonical_cover_title(value: str) -> str:
     """Unify verified regional spellings, keeping sequel and edition suffixes."""
-    value = unicodedata.normalize("NFKC", value)
+    # NFKC expands ™ into literal TM, which breaks store searches and matching.
+    value = unicodedata.normalize("NFKC", re.sub(r"[™®©]", "", value))
     return value.replace("七龍珠", "七龙珠").replace("空之軌跡", "空之轨迹")
 
 

@@ -15,12 +15,13 @@ from .resilience import supervise, wait_for_stop
 
 logger = logging.getLogger(__name__)
 CACHE_ROOT = Path(__file__).resolve().parent.parent / 'data' / 'monthly_rank_cache'
+LAYOUT_VERSION = 'glass-v1'
 
 
 class MonthlyRankCache:
     def __init__(self, source, root: Path = CACHE_ROOT):
         self.source = source
-        self.root = root
+        self.root = root / LAYOUT_VERSION
         self.locks: dict[Path, asyncio.Lock] = {}
 
     @staticmethod

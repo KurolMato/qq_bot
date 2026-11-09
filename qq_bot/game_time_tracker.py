@@ -11,6 +11,7 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_DB_PATH = PROJECT_ROOT / "data" / "game_time.db"
 LOCAL_TZ = timezone(timedelta(hours=8), "Asia/Hong_Kong")
+SWITCH_SAME_GAME_MAX_GAP_SECONDS = 40 * 60
 
 
 @dataclass(frozen=True)
@@ -345,7 +346,10 @@ class GameTimeTracker:
             if previous is not None and previous["game_key"] and previous["game_name"]:
                 previous_at = _parse_time(previous["observed_at"])
                 elapsed = (observed - previous_at).total_seconds()
-                if 0 < elapsed <= self.max_sample_gap:
+                max_gap = self.max_sample_gap
+                if platform == "switch" and normalized_game_key == previous["game_key"] and normalized_game_name:
+                    max_gap = max(max_gap, SWITCH_SAME_GAME_MAX_GAP_SECONDS)
+                if 0 < elapsed <= max_gap:
                     previous_image_url = previous["game_image_url"]
                     if normalized_game_key == previous["game_key"] and game_image_url:
                         previous_image_url = game_image_url

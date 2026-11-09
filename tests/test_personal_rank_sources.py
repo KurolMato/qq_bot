@@ -8,6 +8,12 @@ import pytest
 from qq_bot import personal_rank_sources as sources
 
 
+def test_trademark_is_removed_before_unicode_normalization():
+    assert sources.canonical_cover_title('HELLDIVERS™ 2') == 'HELLDIVERS 2'
+    assert sources.same_title('HELLDIVERS™ 2', 'HELLDIVERS 2 (日语, 简体中文, 英语)')
+    assert not sources.same_title('HELLDIVERS™ 2', 'HELLDIVERS')
+
+
 @pytest.fixture(autouse=True)
 def isolated(monkeypatch):
     monkeypatch.setattr(sources, "_cache", {})

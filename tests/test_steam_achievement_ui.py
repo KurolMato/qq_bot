@@ -173,7 +173,7 @@ def test_legacy_icon_routes_recover_and_render(monkeypatch, failure):
     Image.new('RGB', (64, 64), '#e02040').save(encoded, 'PNG')
     attempted = []
 
-    async def load(url, semaphore):
+    async def load(url, semaphore, **kwargs):
         if not url:
             return None
         attempted.append(url)
@@ -195,7 +195,10 @@ def test_legacy_icon_routes_recover_and_render(monkeypatch, failure):
                    achievement_icon='https://steamcdn-a.akamaihd.net' + path)
     message = asyncio.run(card.build_message('Name', payload))
     assert sum(s.type == 'image' for s in message) == 1
-    assert attempted == ['https://cdn.akamai.steamstatic.com' + path,
+    new_path = path.replace('/steamcommunity/public/', '/community_assets/')
+    assert attempted == ['https://shared.akamai.steamstatic.com' + new_path,
+                         'https://shared.fastly.steamstatic.com' + new_path,
+                         'https://cdn.akamai.steamstatic.com' + path,
                          'https://cdn.cloudflare.steamstatic.com' + path] + (
                              ['https://steamcdn-a.akamaihd.net' + path] if failure == 'all_missing' else [])
     if failure != 'all_missing':
@@ -214,3 +217,13 @@ def test_icon_fallback_only_rewrites_known_asset_routes(monkeypatch, url):
     monkeypatch.setattr(card, '_load_image', load)
     assert asyncio.run(card._load_achievement_icon(url, asyncio.Semaphore(3))) == b'image'
     assert [call.args[0] for call in load.await_args_list] == [url]
+
+
+def test_migrated_community_asset_is_used_before_retired_path(monkeypatch):
+    from qq_bot import steam_achievement_card as card
+    load = AsyncMock(return_value=b'valid-image')
+    monkeypatch.setattr(card, '_load_image', load)
+    url = 'https://steamcdn-a.akamaihd.net/steamcommunity/public/images/apps/4115450/icon.jpg'
+    assert asyncio.run(card._load_achievement_icon(url, asyncio.Semaphore(3))) == b'valid-image'
+    assert [call.args[0] for call in load.await_args_list] == [
+        'https://shared.akamai.steamstatic.com/community_assets/images/apps/4115450/icon.jpg']
